@@ -1,0 +1,13 @@
+
+body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #000;
+    
+    /* Mobile Optimization */
+    touch-action: none;        /* Disables browser gestures (scrolling/swiping) */
+    user-select: none;         /* Prevents text selection specific to touch */
+    -webkit-user-select: none; 
+    -webkit-touch-callout: none; /* Disables callout menus on iOS */
+    -webkit-tap-highlight-color: transparent; /* Removes blue tap box */
+}
