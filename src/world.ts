@@ -38,15 +38,7 @@ class Chunk {
 
         geo.computeVertexNormals();
 
-        const mat = new THREE.MeshStandardMaterial({
-            color: CONFIG.COLORS.GROUND_BASE, // Single flat color
-            roughness: 0.7,
-            metalness: 0.1,
-            flatShading: false, // Smooth shading as requested
-            side: THREE.FrontSide
-        });
-
-        this.mesh = new THREE.Mesh(geo, mat);
+        this.mesh = new THREE.Mesh(geo, ASSETS.matGround);
         this.mesh.rotation.x = -Math.PI / 2;
         this.mesh.position.set(xIdx * size, 0, zIdx * size);
         this.mesh.receiveShadow = true;

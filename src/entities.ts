@@ -2,8 +2,38 @@
 
 
 import * as THREE from 'three';
-import { CONFIG, Vector2 } from './definitions';
+import { CONFIG, Vector2, PALETTE_SPRING, Palette } from './definitions';
 import { randomInt, randomFloat, getTerrainHeight } from './utils';
+
+// --- TEXTURE HELPERS ---
+function createGrassTexture() {
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    // Fill base
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+
+    // Add noise/grass blades pattern
+    for (let i = 0; i < 5000; i++) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        const gray = Math.random() * 50 + 205;
+        ctx.fillStyle = `rgb(${gray},${gray},${gray})`;
+        ctx.fillRect(x, y, 1, 3); // Small blades
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(20, 20); // Tile it
+    return tex;
+}
+
+const grassMap = createGrassTexture();
 
 export interface Obstacle {
     position: THREE.Vector3;
@@ -14,28 +44,28 @@ export interface Obstacle {
 // --- RESOURCE CACHE (Optimization) ---
 export const ASSETS = {
     matTree: new THREE.MeshStandardMaterial({
-        color: CONFIG.COLORS.OBSTACLE_DARK,
+        color: PALETTE_SPRING.colors.OBSTACLE_DARK,
         roughness: 0.1,
         flatShading: true
     }),
     matRing: new THREE.MeshStandardMaterial({
-        color: CONFIG.COLORS.UI_ACCENT,
-        emissive: CONFIG.COLORS.UI_ACCENT,
+        color: PALETTE_SPRING.colors.UI_ACCENT,
+        emissive: PALETTE_SPRING.colors.UI_ACCENT,
         emissiveIntensity: 2.0, // Softer halo
         roughness: 0.0,
         flatShading: true
     }),
     matRock: new THREE.MeshStandardMaterial({
-        color: CONFIG.COLORS.OBSTACLE_LIGHT,
+        color: PALETTE_SPRING.colors.OBSTACLE_LIGHT,
         roughness: 0.6,
         flatShading: true,
         emissiveIntensity: 0.8,
     }),
     matCrystal: new THREE.MeshStandardMaterial({
-        color: CONFIG.COLORS.CRYSTAL,
+        color: PALETTE_SPRING.colors.CRYSTAL,
         roughness: 0.0,
         metalness: 0.2,
-        emissive: CONFIG.COLORS.CRYSTAL,
+        emissive: PALETTE_SPRING.colors.CRYSTAL,
         emissiveIntensity: 0.8,
         flatShading: true,
         transparent: true,
@@ -50,17 +80,42 @@ export const ASSETS = {
     geoTreeRing: new THREE.TorusGeometry(1.5, 0.2, 4, 12),
 
     matGrass: new THREE.MeshStandardMaterial({
-        color: 0x4CAF50,
+        color: PALETTE_SPRING.colors.GRASS,
         roughness: 0.8,
         flatShading: true
     }),
     matApple: new THREE.MeshStandardMaterial({
-        color: CONFIG.COLORS.APPLE,
+        color: PALETTE_SPRING.colors.APPLE,
         roughness: 0.0,
-        emissive: CONFIG.COLORS.APPLE_EMISSIVE,
+        emissive: PALETTE_SPRING.colors.APPLE_EMISSIVE,
         emissiveIntensity: 6.0,
         flatShading: true
-    })
+    }),
+    matHumanLandmark: new THREE.MeshStandardMaterial({
+        color: 0xFFFFFF,
+        roughness: 0.2,
+        metalness: 0.1,
+        flatShading: true
+    }),
+    matRedRock: new THREE.MeshStandardMaterial({
+        color: 0xB71C1C, // Deep red ochre
+        roughness: 0.9,
+        flatShading: true
+    }),
+    matGround: new THREE.MeshStandardMaterial({
+        color: PALETTE_SPRING.colors.GROUND_BASE,
+        map: grassMap,
+        roughnessMap: grassMap,
+        roughness: 0.8,
+        metalness: 0.1,
+        flatShading: false,
+        side: THREE.FrontSide
+    }),
+    // Landmark Geometries
+    geoDome: new THREE.SphereGeometry(1, 4, 8, 0, Math.PI), // Half shell for Opera House
+    geoArch: new THREE.TorusGeometry(1, 0.1, 4, 12, Math.PI), // Bridge Arch
+    geoCylinder: new THREE.CylinderGeometry(1, 1, 1, 8), // Generic cylinder for Tower/Pillars
+    geoBox: new THREE.BoxGeometry(1, 1, 1) // For Uluru
 };
 
 // Fix geometries center/rotation for easier instancing
@@ -68,11 +123,11 @@ ASSETS.geoTreeTrunk.translate(0, 0.5, 0); // Pivot at bottom
 
 // --- PROPS (Logical World Objects) ---
 export class Prop {
-    type: 'tree' | 'rock' | 'crystal' | 'grass';
+    type: 'tree' | 'rock' | 'crystal' | 'grass' | 'landmark';
     position: THREE.Vector3;
     radius: number;
 
-    constructor(type: 'tree' | 'rock' | 'crystal' | 'grass', position: THREE.Vector3, radius: number) {
+    constructor(type: 'tree' | 'rock' | 'crystal' | 'grass' | 'landmark', position: THREE.Vector3, radius: number) {
         this.type = type;
         this.position = position;
         this.radius = radius;
@@ -80,6 +135,108 @@ export class Prop {
 }
 
 export class PropFactory {
+    // --- LANDMARKS ---
+    static generateOperaHouse(x: number, z: number) {
+        const height = getTerrainHeight(x, z);
+        const pos = new THREE.Vector3(x, height - 2, z); // Sunk in sand
+        const matrices: THREE.Matrix4[] = [];
+
+        // 3 Sails
+        const dummy = new THREE.Object3D();
+
+        // Sail 1 (Big)
+        dummy.position.copy(pos);
+        dummy.rotation.x = -Math.PI / 2; // Face up
+        dummy.rotation.z = 0.5;
+        dummy.scale.set(15, 15, 25);
+        dummy.updateMatrix();
+        matrices.push(dummy.matrix.clone());
+
+        // Sail 2 (Med)
+        dummy.position.copy(pos).add(new THREE.Vector3(12, 0, 5));
+        dummy.rotation.z = 0.3;
+        dummy.scale.set(12, 12, 20);
+        dummy.updateMatrix();
+        matrices.push(dummy.matrix.clone());
+
+        // Sail 3 (Small)
+        dummy.position.copy(pos).add(new THREE.Vector3(22, 0, 8));
+        dummy.rotation.z = 0.1;
+        dummy.scale.set(8, 8, 15);
+        dummy.updateMatrix();
+        matrices.push(dummy.matrix.clone());
+
+        return {
+            prop: new Prop('landmark', pos, 30),
+            matrices: { opera: matrices }
+        };
+    }
+
+    static generateHarbourBridge(x: number, z: number) {
+        const height = getTerrainHeight(x, z);
+        const pos = new THREE.Vector3(x, height - 5, z); // Sunk
+        const matrices: THREE.Matrix4[] = [];
+
+        const dummy = new THREE.Object3D();
+        dummy.position.copy(pos);
+        dummy.rotation.z = 0.2; // Tilted slightly as if collapsed
+        dummy.scale.set(60, 60, 60); // Huge
+        dummy.updateMatrix();
+        matrices.push(dummy.matrix.clone());
+
+        return {
+            prop: new Prop('landmark', pos, 60),
+            matrices: { bridge: matrices }
+        };
+    }
+
+    static generateSydneyTower(x: number, z: number) {
+        const height = getTerrainHeight(x, z);
+        const pos = new THREE.Vector3(x, height + 2, z);
+        const matrices: THREE.Matrix4[] = [];
+
+        const dummy = new THREE.Object3D();
+        // Lying on its side
+        dummy.position.copy(pos);
+        dummy.rotation.z = Math.PI / 2 + 0.1;
+        dummy.rotation.x = 0.5;
+
+        // Shaft
+        dummy.scale.set(2, 60, 2);
+        dummy.updateMatrix();
+        matrices.push(dummy.matrix.clone());
+
+        // Turret (Bucket)
+        const turretPos = pos.clone().add(new THREE.Vector3(50, 0, 0)); // Roughly where top is
+        dummy.position.copy(turretPos);
+        dummy.rotation.z = Math.PI / 2 + 0.1;
+        dummy.scale.set(8, 6, 8);
+        dummy.updateMatrix();
+        matrices.push(dummy.matrix.clone());
+
+        return {
+            prop: new Prop('landmark', pos, 50),
+            matrices: { tower: matrices }
+        };
+    }
+
+    static generateUluru(x: number, z: number) {
+        const height = getTerrainHeight(x, z);
+        const pos = new THREE.Vector3(x, height, z);
+        const matrices: THREE.Matrix4[] = [];
+
+        const dummy = new THREE.Object3D();
+        dummy.position.copy(pos);
+        dummy.scale.set(60, 20, 40); // Wide and flat-ish
+        dummy.updateMatrix();
+        matrices.push(dummy.matrix.clone());
+
+        return {
+            prop: new Prop('landmark', pos, 40),
+            matrices: { uluru: matrices }
+        };
+    }
+
     static generateTree(x: number, z: number) {
         const height = getTerrainHeight(x, z);
         const pos = new THREE.Vector3(x, height, z);
@@ -207,6 +364,8 @@ export class Snake {
     angle: number = 0;
     turnFactor: number = 0;
 
+    currentHeadColor: number = PALETTE_SPRING.colors.SNAKE_HEAD;
+
     // Physics
     targetBaseSpeed: number = CONFIG.BASE_SNAKE_SPEED;
     actualSpeed: number = CONFIG.BASE_SNAKE_SPEED;
@@ -246,22 +405,22 @@ export class Snake {
         this.bodyGeo = new THREE.IcosahedronGeometry(r, 0);
 
         this.headMat = new THREE.MeshStandardMaterial({
-            color: CONFIG.COLORS.SNAKE_HEAD,
-            emissive: CONFIG.COLORS.SNAKE_HEAD,
+            color: PALETTE_SPRING.colors.SNAKE_HEAD,
+            emissive: PALETTE_SPRING.colors.SNAKE_HEAD,
             emissiveIntensity: 1.2,
             roughness: 0.0,
             flatShading: true
         });
 
         this.bodyMat = new THREE.MeshStandardMaterial({
-            color: CONFIG.COLORS.SNAKE_BODY,
-            emissive: CONFIG.COLORS.SNAKE_BODY,
+            color: PALETTE_SPRING.colors.SNAKE_BODY,
+            emissive: PALETTE_SPRING.colors.SNAKE_BODY,
             emissiveIntensity: 0.3,
             roughness: 0.3,
             flatShading: true
         });
 
-        this.playerLight = new THREE.PointLight(CONFIG.COLORS.SNAKE_EMISSIVE, 2.0, 20);
+        this.playerLight = new THREE.PointLight(PALETTE_SPRING.colors.SNAKE_EMISSIVE, 2.0, 20);
         this.playerLight.position.y = 2;
         this.mesh.add(this.playerLight);
 
@@ -324,6 +483,17 @@ export class Snake {
 
     setBaseSpeed(speed: number) { this.targetBaseSpeed = speed; }
     setTurn(turn: number) { this.turnFactor = turn; }
+
+    updatePalette(palette: Palette) {
+        this.currentHeadColor = palette.colors.SNAKE_HEAD;
+        this.headMat.color.setHex(palette.colors.SNAKE_HEAD);
+        this.headMat.emissive.setHex(palette.colors.SNAKE_HEAD);
+
+        this.bodyMat.color.setHex(palette.colors.SNAKE_BODY);
+        this.bodyMat.emissive.setHex(palette.colors.SNAKE_BODY);
+
+        this.playerLight.color.setHex(palette.colors.SNAKE_EMISSIVE);
+    }
 
     triggerBoost() {
         if (this.isBoosting) {
@@ -581,10 +751,10 @@ export class Snake {
         if (this.isStalled) {
             const warnPulse = (Math.sin(time * 10) + 1) * 0.5;
             this.headMat.emissiveIntensity = 1.2 + warnPulse * 1.0;
-            this.headMat.color.setHex(CONFIG.COLORS.APPLE);
+            this.headMat.color.setHex(0xFF0000);
         } else {
             this.headMat.emissiveIntensity = 1.2;
-            this.headMat.color.setHex(CONFIG.COLORS.SNAKE_HEAD);
+            this.headMat.color.setHex(this.currentHeadColor);
         }
 
         // Update Body Segments
@@ -696,11 +866,15 @@ export class AppleManager {
             }
 
             // Only add lights to nearby apples for performance
-            if (distSqToHead < lightDistSq && !apple.light) {
-                const appleLight = new THREE.PointLight(0xFF4081, 1.2, 8);
-                appleLight.position.set(0, 0, 0);
-                apple.mesh.add(appleLight);
-                apple.light = appleLight;
+            if (distSqToHead < lightDistSq) {
+                if (!apple.light) {
+                    const appleLight = new THREE.PointLight(ASSETS.matApple.emissive, 1.2, 8);
+                    appleLight.position.set(0, 0, 0);
+                    apple.mesh.add(appleLight);
+                    apple.light = appleLight;
+                }
+                // Ensure light matches current palette (which updates ASSETS)
+                apple.light.color.copy(ASSETS.matApple.emissive);
             } else if (distSqToHead >= lightDistSq && apple.light) {
                 apple.mesh.remove(apple.light);
                 apple.light = undefined;
@@ -761,4 +935,23 @@ export class AppleManager {
         }
         this.activeApples = [];
     }
+}
+
+export function updateAssetMaterials(palette: Palette) {
+    ASSETS.matTree.color.setHex(palette.colors.OBSTACLE_DARK);
+
+    ASSETS.matRing.color.setHex(palette.colors.UI_ACCENT);
+    ASSETS.matRing.emissive.setHex(palette.colors.UI_ACCENT);
+
+    ASSETS.matRock.color.setHex(palette.colors.OBSTACLE_LIGHT);
+
+    ASSETS.matCrystal.color.setHex(palette.colors.CRYSTAL);
+    ASSETS.matCrystal.emissive.setHex(palette.colors.CRYSTAL);
+
+    ASSETS.matGrass.color.setHex(palette.colors.GRASS);
+
+    ASSETS.matApple.color.setHex(palette.colors.APPLE);
+    ASSETS.matApple.emissive.setHex(palette.colors.APPLE_EMISSIVE);
+
+    ASSETS.matGround.color.setHex(palette.colors.GROUND_BASE);
 }

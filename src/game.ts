@@ -1,7 +1,7 @@
 
 import * as THREE from 'three';
-import { CONFIG, GameState } from './definitions';
-import { Snake, AppleManager } from './entities';
+import { CONFIG, GameState, PALETTE_SPRING, PALETTE_SUMMER, PALETTE_AUTUMN, PALETTE_WINTER, Palette } from './definitions';
+import { Snake, AppleManager, updateAssetMaterials } from './entities';
 import { World } from './world';
 import { UI } from './ui';
 import { AudioManager } from './audio';
@@ -12,6 +12,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass';
+import { Water } from 'three/examples/jsm/objects/Water';
 
 // Floating dust motes class
 class DustSystem {
@@ -60,6 +61,11 @@ export class Game {
     dust: DustSystem;
     burstSystem: BurstSystem;
 
+    hemiLight!: THREE.HemisphereLight;
+    bloomPass!: UnrealBloomPass;
+
+    currentPalette!: Palette;
+
     state: GameState = GameState.MENU;
     score: number = 0;
 
@@ -75,6 +81,7 @@ export class Game {
     cameraHeightOffset: number = 18.0;
 
     sunLight!: THREE.DirectionalLight;
+    water!: Water;
     skyMesh!: THREE.Mesh;
     underwaterOverlay!: HTMLDivElement;
     lastRippleTime: number = 0;
@@ -88,12 +95,14 @@ export class Game {
 
     constructor() {
         this.audio = new AudioManager();
+        this.currentPalette = PALETTE_SPRING;
 
         this.scene = new THREE.Scene();
 
         this.createSky();
+        this.createWater();
 
-        this.scene.fog = new THREE.Fog(CONFIG.COLORS.FOG, 40, CONFIG.FOG_DIST);
+        this.scene.fog = new THREE.Fog(PALETTE_SPRING.colors.FOG, PALETTE_SPRING.fog.near, PALETTE_SPRING.fog.far);
 
         this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
 
@@ -116,14 +125,13 @@ export class Game {
         this.composer.addPass(renderPass);
 
         // Resolution, strength, radius, threshold
-        const bloomPass = new UnrealBloomPass(
+        this.bloomPass = new UnrealBloomPass(
             new THREE.Vector2(window.innerWidth, window.innerHeight),
-            1.5, 0.4, 0.85
+            PALETTE_SPRING.bloom.strength,
+            PALETTE_SPRING.bloom.radius,
+            PALETTE_SPRING.bloom.threshold
         );
-        bloomPass.threshold = 0.5; // Only VERY bright things glow
-        bloomPass.strength = 0.3; // Very soft glow
-        bloomPass.radius = 0.5;
-        this.composer.addPass(bloomPass);
+        this.composer.addPass(this.bloomPass);
 
         const outputPass = new OutputPass();
         this.composer.addPass(outputPass);
@@ -141,8 +149,8 @@ export class Game {
             this.startGame();
         };
 
-        const hemiLight = new THREE.HemisphereLight(CONFIG.COLORS.SKY_TOP, CONFIG.COLORS.GROUND_BASE, 0.4);
-        this.scene.add(hemiLight);
+        this.hemiLight = new THREE.HemisphereLight(PALETTE_SPRING.colors.SKY_TOP, PALETTE_SPRING.colors.GROUND_BASE, 0.4);
+        this.scene.add(this.hemiLight);
 
         this.sunLight = new THREE.DirectionalLight(0xFFE0B2, 0.7);
         this.sunLight.position.set(50, 100, 50);
@@ -165,7 +173,7 @@ export class Game {
         this.snake.onCrash = () => this.gameOver();
         this.snake.onLand = (speed) => {
             // Emit dust on landing
-            this.burstSystem.emit(this.snake.position, Math.floor(speed * 0.5));
+            this.burstSystem.emit(this.snake.position, Math.floor(speed * 0.5), this.currentPalette.colors.GROUND_BASE);
         };
         this.snake.onEnterWater = () => {
             // Emit bubbles when entering water
@@ -177,7 +185,7 @@ export class Game {
         };
         this.snake.onExitWater = () => {
             // Emit splash particles when exiting water
-            this.burstSystem.emit(this.snake.position, 20);
+            this.burstSystem.emit(this.snake.position, 20, 0xFFFFFF);
             // Play exit splash sound
             this.audio.playWaterSplash();
             // Stop continuous water sound
@@ -188,7 +196,7 @@ export class Game {
 
         this.appleManager.onEat = (pos: THREE.Vector3) => {
             this.audio.playEat();
-            this.burstSystem.emit(pos, 15);
+            this.burstSystem.emit(pos, 15, this.currentPalette.colors.APPLE);
         };
 
         this.dust = new DustSystem(this.scene);
@@ -221,18 +229,27 @@ export class Game {
       `;
         const fragmentShader = `
         uniform vec3 topColor;
+        uniform vec3 midColor;
         uniform vec3 bottomColor;
         uniform float offset;
         uniform float exponent;
         varying vec3 vWorldPosition;
         void main() {
             float h = normalize( vWorldPosition + offset ).y;
-            gl_FragColor = vec4( mix( bottomColor, topColor, max( pow( max( h , 0.0), exponent ), 0.0 ) ), 1.0 );
+            float val = max( pow( max( h , 0.0), exponent ), 0.0 );
+            vec3 col;
+            if (val < 0.5) {
+                col = mix(bottomColor, midColor, val * 2.0);
+            } else {
+                col = mix(midColor, topColor, (val - 0.5) * 2.0);
+            }
+            gl_FragColor = vec4( col, 1.0 );
         }
       `;
         const uniforms = {
-            topColor: { value: new THREE.Color(CONFIG.COLORS.SKY_TOP) },
-            bottomColor: { value: new THREE.Color(CONFIG.COLORS.SKY_BOTTOM) },
+            topColor: { value: new THREE.Color(PALETTE_SPRING.colors.SKY_TOP) },
+            midColor: { value: new THREE.Color(PALETTE_SPRING.colors.SKY_MID) },
+            bottomColor: { value: new THREE.Color(PALETTE_SPRING.colors.SKY_BOTTOM) },
             offset: { value: 20 },
             exponent: { value: 0.6 }
         };
@@ -291,7 +308,56 @@ export class Game {
             case 'ArrowLeft': case 'a': case 'A': this.keys.left = pressed; break;
             case 'ArrowRight': case 'd': case 'D': this.keys.right = pressed; break;
             case ' ': case 'Spacebar': this.keys.boost = pressed; break;
+            case '1': if (pressed) this.setSeason(PALETTE_SPRING); break;
+            case '2': if (pressed) this.setSeason(PALETTE_SUMMER); break;
+            case '3': if (pressed) this.setSeason(PALETTE_AUTUMN); break;
+            case '4': if (pressed) this.setSeason(PALETTE_WINTER); break;
         }
+    }
+
+    setSeason(palette: Palette) {
+        this.currentPalette = palette;
+
+        // 1. Update Global Assets (Trees, Rocks, etc)
+        updateAssetMaterials(palette);
+
+        // 2. Update Snake
+        this.snake.updatePalette(palette);
+
+        // 3. Update Sky
+        if (this.skyMesh) {
+            const mat = this.skyMesh.material as THREE.ShaderMaterial;
+            mat.uniforms.topColor.value.setHex(palette.colors.SKY_TOP);
+            mat.uniforms.midColor.value.setHex(palette.colors.SKY_MID);
+            mat.uniforms.bottomColor.value.setHex(palette.colors.SKY_BOTTOM);
+        }
+
+        // 4. Update Lights & Fog
+        this.hemiLight.color.setHex(palette.colors.SKY_TOP);
+        this.hemiLight.groundColor.setHex(palette.colors.GROUND_BASE);
+
+        if (this.scene.fog instanceof THREE.Fog) {
+            this.scene.fog.color.setHex(palette.colors.FOG);
+            this.scene.fog.near = palette.fog.near;
+            this.scene.fog.far = palette.fog.far;
+        }
+
+        // 5. Update Post Processing
+        this.bloomPass.strength = palette.bloom.strength;
+        this.bloomPass.radius = palette.bloom.radius;
+        this.bloomPass.threshold = palette.bloom.threshold;
+
+        // 6. Update Water
+        if (this.water) {
+            this.water.material.uniforms['waterColor'].value.setHex(palette.colors.WATER);
+        }
+
+        // 7. Update UI
+        this.ui.updateAccentColor(palette.colors.UI_ACCENT); // Need to implement this in UI?
+        // UI class handles CSS? Or pure HTML?
+        // UI class is in ui.ts. Let's assume we can't easily update CSS variables yet, 
+        // but we can try setting document style.
+        document.documentElement.style.setProperty('--primary-color', '#' + new THREE.Color(palette.colors.UI_ACCENT).getHexString());
     }
 
     // --- TOUCH HANDLER ---
@@ -347,6 +413,10 @@ export class Game {
             }
 
             this.updateVisuals(dt);
+
+            if (this.water) {
+                this.water.material.uniforms['time'].value += dt * 0.5;
+            }
         }
         else if (this.state === GameState.GAME_OVER || this.state === GameState.MENU) {
             const t = time * 0.0001;
@@ -375,6 +445,10 @@ export class Game {
         }
 
         this.world.update(this.snake.position.x, this.snake.position.z);
+
+        if (this.water) {
+            this.water.material.uniforms['sunDirection'].value.copy(this.sunLight.position).normalize();
+        }
 
         const obstacles = this.world.getObstacles();
         const alive = this.snake.update(dt, obstacles);
@@ -509,6 +583,10 @@ export class Game {
 
         this.sunLight.target.position.copy(headPos);
         this.skyMesh.position.copy(headPos);
+        if (this.water) {
+            this.water.position.x = headPos.x;
+            this.water.position.z = headPos.z;
+        }
     }
 
     createUnderwaterOverlay() {
@@ -550,5 +628,62 @@ export class Game {
         this.audio.stopWaterSound();
         this.state = GameState.GAME_OVER;
         this.ui.showGameOver(this.score);
+    }
+
+    createWater() {
+        // Large plane for infinite feel
+        const waterGeometry = new THREE.PlaneGeometry(1000, 1000);
+
+        // Generate a procedural normal map for ripples
+        // We'll use a canvas to draw some noise/waves
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.fillStyle = '#8080ff'; // Neutral normal pointing up
+            ctx.fillRect(0, 0, 256, 256);
+
+            // Add soft procedural waves
+            for (let i = 0; i < 20; i++) {
+                const x = Math.random() * 256;
+                const y = Math.random() * 256;
+                const radius = 20 + Math.random() * 50;
+                const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+                gradient.addColorStop(0, 'rgba(140, 140, 255, 0.2)');
+                gradient.addColorStop(1, 'rgba(128, 128, 255, 0)');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, 256, 256);
+            }
+        }
+
+        const waterNormals = new THREE.CanvasTexture(canvas);
+        waterNormals.wrapS = waterNormals.wrapT = THREE.RepeatWrapping;
+
+        this.water = new Water(
+            waterGeometry,
+            {
+                textureWidth: 512,
+                textureHeight: 512,
+                waterNormals: waterNormals,
+                sunDirection: new THREE.Vector3(),
+                sunColor: 0xffffff,
+                waterColor: this.currentPalette.colors.WATER,
+                distortionScale: 3.7,
+                fog: this.scene.fog !== undefined
+            }
+        );
+
+        this.water.rotation.x = -Math.PI / 2;
+        this.water.position.y = CONFIG.WATER_LEVEL;
+
+        // --- CUSTOM TRANSPARENCY PATCH ---
+        this.water.material.transparent = true;
+        this.water.material.fragmentShader = this.water.material.fragmentShader.replace(
+            'gl_FragColor = vec4( color, 1.0 );',
+            'gl_FragColor = vec4( color, 0.75 );' // 75% opacity
+        );
+
+        this.scene.add(this.water);
     }
 }

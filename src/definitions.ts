@@ -2,6 +2,187 @@
 
 import * as THREE from 'three';
 
+// Palette Definition
+export interface Palette {
+  name: string;
+  colors: {
+    SNAKE_HEAD: number;
+    SNAKE_BODY: number;
+    SNAKE_EMISSIVE: number;
+
+    APPLE: number;
+    APPLE_EMISSIVE: number;
+
+    GROUND_BASE: number;
+
+    OBSTACLE_DARK: number;  // Trees
+    OBSTACLE_LIGHT: number; // Rocks
+    CRYSTAL: number;
+    GRASS: number;
+
+    SKY_TOP: number;
+    SKY_MID: number;
+    SKY_BOTTOM: number;
+    FOG: number;
+    WATER: number;
+
+    UI_ACCENT: number;
+  };
+  bloom: {
+    strength: number;
+    radius: number;
+    threshold: number;
+  };
+  fog: {
+    near: number;
+    far: number;
+  };
+}
+
+export const PALETTE_SPRING: Palette = {
+  name: 'Spring',
+  colors: {
+    // 1. Pale Teal (Wash)
+    // 2. Mint (Mid)
+    // 3. Deep Teal (Base)
+    // 4. Dark Evergreen (Silhouette)
+    // 5. Stark White (Hero)
+    // 6. Rose Pink (Accent)
+
+    SNAKE_HEAD: 0xFFFFFF,      // Hero
+    SNAKE_BODY: 0xE0F2F1,      // Wash
+    SNAKE_EMISSIVE: 0xFFFFFF,
+
+    APPLE: 0xFF80AB,           // Accent
+    APPLE_EMISSIVE: 0xFF4081,
+
+    GROUND_BASE: 0x4DB6AC,     // Base
+
+    OBSTACLE_DARK: 0x004D40,   // Silhouette
+    OBSTACLE_LIGHT: 0x80CBC4,  // Light variant of base
+    CRYSTAL: 0xFF80AB,         // Accent
+    GRASS: 0x00695C,           // Deep Teal
+
+    SKY_TOP: 0x80CBC4,         // Darkened Teal
+    SKY_MID: 0x4DB6AC,         // Medium Teal
+    SKY_BOTTOM: 0x00695C,      // Deep Teal fade
+    FOG: 0x4DB6AC,
+    WATER: 0x00ACC1,
+
+    UI_ACCENT: 0xFF80AB        // Accent
+  },
+  bloom: { strength: 0.4, radius: 0.8, threshold: 0.6 },
+  fog: { near: 60, far: 380 }
+};
+
+export const PALETTE_SUMMER: Palette = {
+  name: 'Summer',
+  colors: {
+    // 1. Pale Blush
+    // 2. Warm Salmon
+    // 3. Terra Cotta
+    // 4. Deep Burgundy (Silhouette)
+    // 5. White (Hero)
+    // 6. Gold (Accent)
+
+    SNAKE_HEAD: 0xFFFFFF,
+    SNAKE_BODY: 0xFFEBEE,
+    SNAKE_EMISSIVE: 0xFFFFFF,
+
+    APPLE: 0xFFD740,          // Accent
+    APPLE_EMISSIVE: 0xFFEA00,
+
+    GROUND_BASE: 0xE57373,    // Base
+
+    OBSTACLE_DARK: 0x880E4F,  // Silhouette
+    OBSTACLE_LIGHT: 0xEF9A9A,
+    CRYSTAL: 0xFFD740,
+    GRASS: 0xC62828,
+
+    SKY_TOP: 0xEF9A9A,        // Soft Red
+    SKY_MID: 0xE57373,        // Salmon
+    SKY_BOTTOM: 0xD32F2F,     // Base Dark
+    FOG: 0xE57373,
+    WATER: 0xC62828,
+
+    UI_ACCENT: 0xFFD740
+  },
+  bloom: { strength: 0.5, radius: 0.9, threshold: 0.5 },
+  fog: { near: 60, far: 380 }
+};
+
+export const PALETTE_AUTUMN: Palette = {
+  name: 'Autumn',
+  colors: {
+    // 1. Cream
+    // 2. Goldenrod
+    // 3. Ochre
+    // 4. Burnt Umber (Silhouette)
+    // 5. White
+    // 6. Royal Purple (Accent)
+
+    SNAKE_HEAD: 0xFFFFFF,
+    SNAKE_BODY: 0xFFF8E1,
+    SNAKE_EMISSIVE: 0xFFFFFF,
+
+    APPLE: 0x7C4DFF,           // Accent
+    APPLE_EMISSIVE: 0xB388FF,
+
+    GROUND_BASE: 0xFFB74D,     // Base
+
+    OBSTACLE_DARK: 0x3E2723,   // Silhouette
+    OBSTACLE_LIGHT: 0xFFCC80,
+    CRYSTAL: 0x7C4DFF,
+    GRASS: 0xE65100,
+
+    SKY_TOP: 0xFFE082,         // Gold
+    SKY_MID: 0xFFB74D,         // Orange
+    SKY_BOTTOM: 0xF57F17,      // Deep Gold
+    FOG: 0xFFB74D,
+    WATER: 0xFB8C00,
+
+    UI_ACCENT: 0x7C4DFF
+  },
+  bloom: { strength: 0.6, radius: 1.0, threshold: 0.4 },
+  fog: { near: 60, far: 400 }
+};
+
+export const PALETTE_WINTER: Palette = {
+  name: 'Winter',
+  colors: {
+    // 1. Ghost White
+    // 2. Powder Blue
+    // 3. Steel Blue
+    // 4. Midnight Blue (Silhouette)
+    // 5. White
+    // 6. Warm Peach (Accent)
+
+    SNAKE_HEAD: 0xFFFFFF,
+    SNAKE_BODY: 0xE3F2FD,
+    SNAKE_EMISSIVE: 0xFFFFFF,
+
+    APPLE: 0xFFAB91,           // Accent
+    APPLE_EMISSIVE: 0xFFCCBC,
+
+    GROUND_BASE: 0x64B5F6,     // Base
+
+    OBSTACLE_DARK: 0x0D47A1,   // Silhouette
+    OBSTACLE_LIGHT: 0x90CAF9,
+    CRYSTAL: 0xFFAB91,
+    GRASS: 0x1565C0,
+
+    SKY_TOP: 0x90CAF9,         // More Blue, less white
+    SKY_MID: 0x64B5F6,
+    SKY_BOTTOM: 0x1976D2,
+    FOG: 0x90CAF9,
+    WATER: 0x1E88E5,
+
+    UI_ACCENT: 0xFFAB91
+  },
+  bloom: { strength: 0.3, radius: 0.6, threshold: 0.7 },
+  fog: { near: 50, far: 350 }
+};
+
 export const CONFIG = {
   // Base configuration
   BASE_SNAKE_SPEED: 14.0,
@@ -30,8 +211,8 @@ export const CONFIG = {
   TERRAIN_SCALE: 0.004,
   TERRAIN_HEIGHT: 14.0,    // Made taller for better cliffs
   CHUNK_SIZE: 100,
-  RENDER_DISTANCE: 3,
-  FOG_DIST: 180,
+  RENDER_DISTANCE: 4,
+  FOG_DIST: 380, // Kept for default initialization if needed, but Game will override
   WATER_LEVEL: -20.0,
 
   // Physics
@@ -48,31 +229,7 @@ export const CONFIG = {
   APPLE_ROT_TIME: 30.0,
   MAX_APPLES: 80,
   SPAWN_CHANCE: 0.90,
-  APPLE_CULL_DIST: 350.0,
-
-  // DREAMSCAPE PALETTE (Calm & Beautiful)
-  COLORS: {
-    SNAKE_HEAD: 0x00E5FF,
-    SNAKE_BODY: 0x00B8D4,
-    SNAKE_EMISSIVE: 0x00E5FF,
-
-    APPLE: 0xFF4081,
-    APPLE_EMISSIVE: 0xFF4081,
-
-    GROUND_BASE: 0x8D3B4C,  // Reddish-purple ground (Reference match)
-    GROUND_HIGH: 0x8D3B4C,  // Flat color for smooth look
-    GROUND_LOW: 0x8D3B4C,   // Flat color for smooth look
-
-    OBSTACLE_DARK: 0x21172B, // Dark geometric trees
-    OBSTACLE_LIGHT: 0x3D2C4D,
-    CRYSTAL: 0xFFD700,      // Gold/Amber for contrast
-
-    SKY_TOP: 0x2A1B3D,      // Deep purple/space color
-    SKY_BOTTOM: 0xE88D67,   // Soft peach/orange
-    FOG: 0xE88D67,          // Matches horizon
-
-    UI_ACCENT: 0xE88D67     // Match horizon
-  }
+  APPLE_CULL_DIST: 450.0,
 };
 
 export enum GameState {
