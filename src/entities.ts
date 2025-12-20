@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { CONFIG, Vector2, PALETTE_SPRING, Palette } from './definitions';
-import { randomInt, randomFloat, getTerrainHeight } from './utils';
+import { randomInt, randomFloat, randomNormal, getTerrainHeight } from './utils';
 
 // --- TEXTURE HELPERS ---
 function createGrassTexture() {
@@ -48,13 +48,25 @@ export const ASSETS = {
         roughness: 0.1,
         flatShading: true
     }),
-    matRing: new THREE.MeshStandardMaterial({
-        color: PALETTE_SPRING.colors.UI_ACCENT,
-        emissive: PALETTE_SPRING.colors.UI_ACCENT,
-        emissiveIntensity: 2.0, // Softer halo
-        roughness: 0.0,
-        flatShading: true
-    }),
+    matRing: (() => {
+        const mat = new THREE.MeshStandardMaterial({
+            color: PALETTE_SPRING.colors.UI_ACCENT,
+            emissive: PALETTE_SPRING.colors.UI_ACCENT,
+            emissiveIntensity: 1.5,
+            roughness: 0.0,
+            flatShading: true
+        });
+        mat.onBeforeCompile = (shader) => {
+            shader.fragmentShader = shader.fragmentShader.replace(
+                'vec3 totalEmissiveRadiance = emissive;',
+                `vec3 totalEmissiveRadiance = emissive;
+                 #ifdef USE_INSTANCING_COLOR
+                    totalEmissiveRadiance *= vInstanceColor.rgb;
+                 #endif`
+            );
+        };
+        return mat;
+    })(),
     matRock: new THREE.MeshStandardMaterial({
         color: PALETTE_SPRING.colors.OBSTACLE_LIGHT,
         roughness: 0.6,
@@ -248,6 +260,11 @@ export class PropFactory {
         else if (rand < 0.9) { h = randomFloat(30.0, 50.0); w = randomFloat(5.0, 8.0); }
         else { h = randomFloat(50.0, 80.0); w = randomFloat(8.0, 12.0); }
 
+        // Apply normal distribution scale factor (range 0.5x to 3.0x)
+        const scaleMultiplier = Math.min(3.0, Math.max(0.5, randomNormal(1.0, 0.7)));
+        h *= scaleMultiplier;
+        w *= scaleMultiplier;
+
         const rotY = randomFloat(0, Math.PI);
 
         // Matrix for Trunk
@@ -381,6 +398,8 @@ export class Snake {
     isStalled: boolean = false;
     isUnderwater: boolean = false;
     wasUnderwater: boolean = false;
+    isSkimming: boolean = false;
+    airTimer: number = CONFIG.MAX_AIR_TIME;
 
     onBoostStart?: () => void;
     onCrash?: () => void;
@@ -458,6 +477,8 @@ export class Snake {
         this.isAirborne = false;
 
         this.isBoosting = false;
+        this.isSkimming = false;
+        this.airTimer = CONFIG.MAX_AIR_TIME;
         this.invulnerableTimer = 2.0;
         this.isStalled = false;
 
@@ -578,15 +599,24 @@ export class Snake {
         const predictedGroundH = getTerrainHeight(nextX, nextZ);
 
         // --- 4. GROUND COLLISION & AIR LOGIC ---
+        // WATER SKIMMING: If boosting or moving fast enough, the water surface acts like a floor
+        let effectiveGroundH = predictedGroundH;
+        let onWater = false;
+        if ((this.isBoosting || this.actualSpeed >= CONFIG.SKIM_SPEED_THRESHOLD) && CONFIG.WATER_LEVEL > predictedGroundH) {
+            effectiveGroundH = CONFIG.WATER_LEVEL;
+            onWater = true;
+        }
+
         const collisionThreshold = 0.5; // Tolerance
 
-        if (predictedY <= predictedGroundH + CONFIG.SEGMENT_RADIUS) {
-            // WE HIT THE GROUND / STAY ON GROUND
+        if (predictedY <= effectiveGroundH + CONFIG.SEGMENT_RADIUS) {
+            // WE HIT THE GROUND / STAY ON GROUND (or Water Surface)
             const prevAirborne = this.isAirborne;
             const impactVel = this.verticalVelocity;
 
             this.isAirborne = false;
-            this.position.y = predictedGroundH + CONFIG.SEGMENT_RADIUS;
+            this.isSkimming = onWater;
+            this.position.y = effectiveGroundH + CONFIG.SEGMENT_RADIUS;
 
             if (prevAirborne) {
                 // Landing Event
@@ -598,7 +628,11 @@ export class Snake {
             // v = dist/time -> (heightDiff) / dt is wrong because we moved X distance.
             // It's slope * horizontalSpeed.
             // slope = dy/dx. speed = dx/dt.  slope * speed = dy/dt.
-            const currentSlope = (predictedGroundH - currentGroundH) / moveDist;
+            // slope = dy/dx. speed = dx/dt.  slope * speed = dy/dt.
+            const currentGroundH = getTerrainHeight(this.position.x, this.position.z);
+            const currentEffectiveGroundH = ((this.isBoosting || this.actualSpeed >= CONFIG.SKIM_SPEED_THRESHOLD) && CONFIG.WATER_LEVEL > currentGroundH) ? CONFIG.WATER_LEVEL : currentGroundH;
+
+            const currentSlope = (effectiveGroundH - currentEffectiveGroundH) / moveDist;
             const terrainVerticalVel = currentSlope * this.actualSpeed;
 
             if (terrainVerticalVel > this.verticalVelocity) {
@@ -624,6 +658,7 @@ export class Snake {
         } else {
             // WE ARE AIRBORNE
             this.isAirborne = true;
+            this.isSkimming = false;
             this.position.y = predictedY;
         }
 
@@ -665,9 +700,21 @@ export class Snake {
         this.position.z = nextZ;
         // Y already applied
 
-        // Check if underwater
+        // Check if underwater (Deep enough to be submerged)
         this.wasUnderwater = this.isUnderwater;
-        this.isUnderwater = this.position.y < CONFIG.WATER_LEVEL + 1.0;
+        // If skimming, we are technically on high water, not underwater
+        this.isUnderwater = !this.isSkimming && this.position.y < CONFIG.WATER_LEVEL;
+
+        // Breath mechanic
+        if (this.isUnderwater) {
+            this.airTimer -= dt;
+            if (this.airTimer <= 0) {
+                if (this.onCrash) this.onCrash();
+                return false;
+            }
+        } else {
+            this.airTimer = CONFIG.MAX_AIR_TIME;
+        }
 
         // Trigger water entry/exit events
         if (this.isUnderwater && !this.wasUnderwater && this.onEnterWater) {

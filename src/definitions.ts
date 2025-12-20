@@ -214,6 +214,8 @@ export const CONFIG = {
   RENDER_DISTANCE: 4,
   FOG_DIST: 380, // Kept for default initialization if needed, but Game will override
   WATER_LEVEL: -20.0,
+  MAX_AIR_TIME: 3.0,
+  SKIM_SPEED_THRESHOLD: 22.0,
 
   // Physics
   MAX_CLIMBABLE_SLOPE: 2.5,

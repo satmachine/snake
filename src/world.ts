@@ -129,20 +129,27 @@ class Chunk {
 
         // Create Instanced Meshes
         this.createInstancedMesh(group, matrixMap.trunk, ASSETS.geoTreeTrunk, ASSETS.matTree, true);
-        this.createInstancedMesh(group, matrixMap.ring, ASSETS.geoTreeRing, ASSETS.matRing, true);
+        this.createInstancedMesh(group, matrixMap.ring, ASSETS.geoTreeRing, ASSETS.matRing, true, true);
         this.createInstancedMesh(group, matrixMap.rock, ASSETS.geoRock, ASSETS.matRock, true);
         this.createInstancedMesh(group, matrixMap.crystal, ASSETS.geoCrystal, ASSETS.matCrystal, false);
         this.createInstancedMesh(group, matrixMap.grass, ASSETS.geoGrass, ASSETS.matGrass, false);
     }
 
-    createInstancedMesh(group: THREE.Group, matrices: THREE.Matrix4[], geo: THREE.BufferGeometry, mat: THREE.Material, shadows: boolean) {
+    createInstancedMesh(group: THREE.Group, matrices: THREE.Matrix4[], geo: THREE.BufferGeometry, mat: THREE.Material, shadows: boolean, randomizeBrightness: boolean = false) {
         if (matrices.length === 0) return;
 
         const mesh = new THREE.InstancedMesh(geo, mat, matrices.length);
         mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); // Assuming static mostly but cleaner API
 
+        const color = new THREE.Color();
         for (let i = 0; i < matrices.length; i++) {
             mesh.setMatrixAt(i, matrices[i]);
+            if (randomizeBrightness) {
+                // Vary brightness by 20% (0.8 to 1.0)
+                const v = 0.8 + Math.random() * 0.2;
+                color.setRGB(v, v, v);
+                mesh.setColorAt(i, color);
+            }
         }
 
         mesh.instanceMatrix.needsUpdate = true;

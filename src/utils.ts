@@ -11,6 +11,13 @@ export function randomFloat(min: number, max: number): number {
     return Math.random() * (max - min) + min;
 }
 
+export function randomNormal(mean: number, stdDev: number): number {
+    const u1 = Math.random();
+    const u2 = Math.random();
+    const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+    return z0 * stdDev + mean;
+}
+
 // --- SIMPLEX-LIKE NOISE (2D) ---
 // Using a slightly more complex permutation table for better variation
 const PERM = new Uint8Array(512);

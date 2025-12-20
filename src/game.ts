@@ -14,6 +14,15 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass';
 import { Water } from 'three/examples/jsm/objects/Water';
 
+function copyPalette(p: Palette): Palette {
+    return {
+        name: p.name,
+        colors: { ...p.colors },
+        bloom: { ...p.bloom },
+        fog: { ...p.fog }
+    };
+}
+
 // Floating dust motes class
 class DustSystem {
     particles: THREE.Points;
@@ -64,7 +73,8 @@ export class Game {
     hemiLight!: THREE.HemisphereLight;
     bloomPass!: UnrealBloomPass;
 
-    currentPalette!: Palette;
+    targetPalette!: Palette;
+    visualPalette!: Palette;
 
     state: GameState = GameState.MENU;
     score: number = 0;
@@ -95,7 +105,8 @@ export class Game {
 
     constructor() {
         this.audio = new AudioManager();
-        this.currentPalette = PALETTE_SPRING;
+        this.targetPalette = PALETTE_SPRING;
+        this.visualPalette = copyPalette(PALETTE_SPRING);
 
         this.scene = new THREE.Scene();
 
@@ -149,7 +160,7 @@ export class Game {
             this.startGame();
         };
 
-        this.hemiLight = new THREE.HemisphereLight(PALETTE_SPRING.colors.SKY_TOP, PALETTE_SPRING.colors.GROUND_BASE, 0.4);
+        this.hemiLight = new THREE.HemisphereLight(this.visualPalette.colors.SKY_TOP, this.visualPalette.colors.GROUND_BASE, 0.4);
         this.scene.add(this.hemiLight);
 
         this.sunLight = new THREE.DirectionalLight(0xFFE0B2, 0.7);
@@ -173,7 +184,7 @@ export class Game {
         this.snake.onCrash = () => this.gameOver();
         this.snake.onLand = (speed) => {
             // Emit dust on landing
-            this.burstSystem.emit(this.snake.position, Math.floor(speed * 0.5), this.currentPalette.colors.GROUND_BASE);
+            this.burstSystem.emit(this.snake.position, Math.floor(speed * 0.5), this.visualPalette.colors.GROUND_BASE);
         };
         this.snake.onEnterWater = () => {
             // Emit bubbles when entering water
@@ -196,7 +207,7 @@ export class Game {
 
         this.appleManager.onEat = (pos: THREE.Vector3) => {
             this.audio.playEat();
-            this.burstSystem.emit(pos, 15, this.currentPalette.colors.APPLE);
+            this.burstSystem.emit(pos, 15, this.visualPalette.colors.APPLE);
         };
 
         this.dust = new DustSystem(this.scene);
@@ -247,9 +258,9 @@ export class Game {
         }
       `;
         const uniforms = {
-            topColor: { value: new THREE.Color(PALETTE_SPRING.colors.SKY_TOP) },
-            midColor: { value: new THREE.Color(PALETTE_SPRING.colors.SKY_MID) },
-            bottomColor: { value: new THREE.Color(PALETTE_SPRING.colors.SKY_BOTTOM) },
+            topColor: { value: new THREE.Color(this.visualPalette.colors.SKY_TOP) },
+            midColor: { value: new THREE.Color(this.visualPalette.colors.SKY_MID) },
+            bottomColor: { value: new THREE.Color(this.visualPalette.colors.SKY_BOTTOM) },
             offset: { value: 20 },
             exponent: { value: 0.6 }
         };
@@ -316,48 +327,7 @@ export class Game {
     }
 
     setSeason(palette: Palette) {
-        this.currentPalette = palette;
-
-        // 1. Update Global Assets (Trees, Rocks, etc)
-        updateAssetMaterials(palette);
-
-        // 2. Update Snake
-        this.snake.updatePalette(palette);
-
-        // 3. Update Sky
-        if (this.skyMesh) {
-            const mat = this.skyMesh.material as THREE.ShaderMaterial;
-            mat.uniforms.topColor.value.setHex(palette.colors.SKY_TOP);
-            mat.uniforms.midColor.value.setHex(palette.colors.SKY_MID);
-            mat.uniforms.bottomColor.value.setHex(palette.colors.SKY_BOTTOM);
-        }
-
-        // 4. Update Lights & Fog
-        this.hemiLight.color.setHex(palette.colors.SKY_TOP);
-        this.hemiLight.groundColor.setHex(palette.colors.GROUND_BASE);
-
-        if (this.scene.fog instanceof THREE.Fog) {
-            this.scene.fog.color.setHex(palette.colors.FOG);
-            this.scene.fog.near = palette.fog.near;
-            this.scene.fog.far = palette.fog.far;
-        }
-
-        // 5. Update Post Processing
-        this.bloomPass.strength = palette.bloom.strength;
-        this.bloomPass.radius = palette.bloom.radius;
-        this.bloomPass.threshold = palette.bloom.threshold;
-
-        // 6. Update Water
-        if (this.water) {
-            this.water.material.uniforms['waterColor'].value.setHex(palette.colors.WATER);
-        }
-
-        // 7. Update UI
-        this.ui.updateAccentColor(palette.colors.UI_ACCENT); // Need to implement this in UI?
-        // UI class handles CSS? Or pure HTML?
-        // UI class is in ui.ts. Let's assume we can't easily update CSS variables yet, 
-        // but we can try setting document style.
-        document.documentElement.style.setProperty('--primary-color', '#' + new THREE.Color(palette.colors.UI_ACCENT).getHexString());
+        this.targetPalette = palette;
     }
 
     // --- TOUCH HANDLER ---
@@ -444,8 +414,8 @@ export class Game {
             this.ep = Math.max(0, this.ep - CONFIG.EP_DRAIN_PER_SEC * dt);
         } else {
             this.snake.setBoosting(false);
-            // Slow EP regeneration when not boosting and not stalled
-            if (!this.snake.isStalled) {
+            // Regenerate EP ONLY when not holding the boost key and not stalled
+            if (!this.keys.boost && !this.snake.isStalled) {
                 this.ep = Math.min(this.maxEp, this.ep + dt * 2.0);
             }
         }
@@ -482,13 +452,15 @@ export class Game {
     }
 
     updateVisuals(dt: number) {
+        this.updateSeason(dt);
         this.updateCamera(dt);
         this.dust.update(this.camera.position);
 
         this.updateUnderwaterEffects();
+        this.ui.updateAir(this.snake.airTimer, CONFIG.MAX_AIR_TIME, this.snake.isUnderwater);
 
-        // Water trail and ripple effects when underwater
-        if (this.snake.isUnderwater) {
+        // Water trail and ripple effects when interacting with water
+        if (this.snake.isUnderwater || this.snake.isSkimming) {
             // Update water sound based on speed
             this.audio.updateWaterSound(this.snake.actualSpeed);
 
@@ -631,6 +603,90 @@ export class Game {
         this.ui.showGameOver(this.score);
     }
 
+    updateSeason(dt: number) {
+        // 1. Determine target palette based on score
+        if (this.score <= 250) {
+            this.targetPalette = PALETTE_SPRING;
+        } else if (this.score <= 500) {
+            this.targetPalette = PALETTE_SUMMER;
+        } else if (this.score <= 750) {
+            this.targetPalette = PALETTE_AUTUMN;
+        } else {
+            this.targetPalette = PALETTE_WINTER;
+        }
+
+        // 2. Smoothly lerp visualPalette toward targetPalette
+        const p = this.visualPalette;
+        const t = this.targetPalette;
+        const alpha = Math.min(1.0, dt * 1.5); // Transition speed factor
+
+        const lerpColor = (c1: number, c2: number) => {
+            const color1 = new THREE.Color(c1);
+            const color2 = new THREE.Color(c2);
+            color1.lerp(color2, alpha);
+            return color1.getHex();
+        };
+
+        const lerpValue = (v1: number, v2: number) => v1 + (v2 - v1) * alpha;
+
+        // Iterate through all colors in palette
+        for (const key in p.colors) {
+            const k = key as keyof typeof p.colors;
+            p.colors[k] = lerpColor(p.colors[k], t.colors[k]);
+        }
+
+        p.bloom.strength = lerpValue(p.bloom.strength, t.bloom.strength);
+        p.bloom.radius = lerpValue(p.bloom.radius, t.bloom.radius);
+        p.bloom.threshold = lerpValue(p.bloom.threshold, t.bloom.threshold);
+
+        p.fog.near = lerpValue(p.fog.near, t.fog.near);
+        p.fog.far = lerpValue(p.fog.far, t.fog.far);
+
+        // 3. Apply interpolated palette to scene
+        this.applyPalette(p);
+    }
+
+    applyPalette(palette: Palette) {
+        // Update Shared Materials
+        updateAssetMaterials(palette);
+
+        // Update Snake
+        this.snake.updatePalette(palette);
+
+        // Update Sky Shader
+        if (this.skyMesh) {
+            const mat = this.skyMesh.material as THREE.ShaderMaterial;
+            mat.uniforms.topColor.value.setHex(palette.colors.SKY_TOP);
+            mat.uniforms.midColor.value.setHex(palette.colors.SKY_MID);
+            mat.uniforms.bottomColor.value.setHex(palette.colors.SKY_BOTTOM);
+        }
+
+        // Update Lights
+        this.hemiLight.color.setHex(palette.colors.SKY_TOP);
+        this.hemiLight.groundColor.setHex(palette.colors.GROUND_BASE);
+
+        // Update Fog
+        if (this.scene.fog instanceof THREE.Fog) {
+            this.scene.fog.color.setHex(palette.colors.FOG);
+            this.scene.fog.near = palette.fog.near;
+            this.scene.fog.far = palette.fog.far;
+        }
+
+        // Update Post Processing
+        this.bloomPass.strength = palette.bloom.strength;
+        this.bloomPass.radius = palette.bloom.radius;
+        this.bloomPass.threshold = palette.bloom.threshold;
+
+        // Update Water
+        if (this.water) {
+            this.water.material.uniforms['waterColor'].value.setHex(palette.colors.WATER);
+        }
+
+        // Update UI
+        this.ui.updateAccentColor(palette.colors.UI_ACCENT);
+        document.documentElement.style.setProperty('--primary-color', '#' + new THREE.Color(palette.colors.UI_ACCENT).getHexString());
+    }
+
     createWater() {
         // Large plane for infinite feel
         const waterGeometry = new THREE.PlaneGeometry(1000, 1000);
@@ -669,7 +725,7 @@ export class Game {
                 waterNormals: waterNormals,
                 sunDirection: new THREE.Vector3(),
                 sunColor: 0xffffff,
-                waterColor: this.currentPalette.colors.WATER,
+                waterColor: this.visualPalette.colors.WATER,
                 distortionScale: 3.7,
                 fog: this.scene.fog !== undefined
             }

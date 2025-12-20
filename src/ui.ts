@@ -12,6 +12,8 @@ export class UI {
     menuEl: HTMLDivElement;
     gameOverEl: HTMLDivElement;
     finalScoreEl: HTMLSpanElement;
+    airContainerEl!: HTMLDivElement;
+    airBarEl!: HTMLDivElement;
 
     onStartClick: () => void = () => { };
     onRestartClick: () => void = () => { };
@@ -99,6 +101,42 @@ export class UI {
         });
         this.epContainerEl.appendChild(this.epBarEl);
         this.container.appendChild(this.epContainerEl);
+
+        // Air Bar - Above EP bar
+        this.airContainerEl = document.createElement('div');
+        style(this.airContainerEl, {
+            position: 'absolute',
+            bottom: '60px', // Above EP Bar
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: '200px',
+            height: '2px',
+            backgroundColor: 'rgba(255,255,255,0.1)',
+            zIndex: '10',
+            display: 'none' // Hidden by default
+        });
+
+        const airLabel = document.createElement('div');
+        airLabel.innerText = 'OXYGEN';
+        style(airLabel, {
+            position: 'absolute',
+            top: '-15px',
+            left: '0',
+            fontSize: '8px',
+            color: 'rgba(255,255,255,0.5)',
+            letterSpacing: '2px'
+        });
+        this.airContainerEl.appendChild(airLabel);
+
+        this.airBarEl = document.createElement('div');
+        style(this.airBarEl, {
+            width: '100%',
+            height: '100%',
+            backgroundColor: 'white',
+            transition: 'width 0.1s linear'
+        });
+        this.airContainerEl.appendChild(this.airBarEl);
+        this.container.appendChild(this.airContainerEl);
 
         // Menu - Modern Minimal
         this.menuEl = document.createElement('div');
@@ -223,6 +261,22 @@ export class UI {
         } else {
             this.epBarEl.style.backgroundColor = 'rgba(255,255,255,0.4)';
             this.epBarEl.style.boxShadow = 'none';
+        }
+    }
+
+    updateAir(current: number, max: number, visible: boolean) {
+        this.airContainerEl.style.display = visible ? 'block' : 'none';
+        if (!visible) return;
+
+        const pct = Math.min(100, Math.max(0, (current / max) * 100));
+        this.airBarEl.style.width = `${pct}%`;
+
+        if (pct < 33) {
+            this.airBarEl.style.backgroundColor = '#FF5252'; // Danger Red
+            this.airBarEl.style.boxShadow = '0 0 10px #FF5252';
+        } else {
+            this.airBarEl.style.backgroundColor = 'white';
+            this.airBarEl.style.boxShadow = 'none';
         }
     }
 
