@@ -198,6 +198,12 @@ export class Game {
             // Stop continuous water sound
             this.audio.stopWaterSound();
         };
+        this.snake.onBreak = (pos) => {
+            // Emit rock pieces
+            this.burstSystem.emitRockPieces(pos, 30);
+            // Play impact sound
+            this.audio.playImpact();
+        };
 
         this.appleManager = new AppleManager(this.scene, this.snake);
 

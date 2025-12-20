@@ -125,6 +125,50 @@ export class AudioManager {
         osc.stop(t + 2.0);
     }
 
+    playImpact() {
+        if (!this.ctx || !this.masterGain) return;
+        const t = this.ctx.currentTime;
+
+        // Crunchy impact (noise burst)
+        const bufferSize = this.ctx.sampleRate * 0.2;
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * 0.2;
+        }
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = buffer;
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(1000, t);
+        filter.frequency.exponentialRampToValueAtTime(200, t + 0.2);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.4, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterGain);
+
+        noise.start(t);
+        noise.stop(t + 0.2);
+
+        // Low thud
+        const osc = this.ctx.createOscillator();
+        const oscGain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(120, t);
+        osc.frequency.exponentialRampToValueAtTime(60, t + 0.15);
+        oscGain.gain.setValueAtTime(0.3, t);
+        oscGain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+        osc.connect(oscGain);
+        oscGain.connect(this.masterGain);
+        osc.start(t);
+        osc.stop(t + 0.15);
+    }
+
     // Water sound effects
     waterNoiseNode: AudioBufferSourceNode | null = null;
     waterGainNode: GainNode | null = null;

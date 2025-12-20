@@ -38,6 +38,9 @@ const grassMap = createGrassTexture();
 export interface Obstacle {
     position: THREE.Vector3;
     radius: number;
+    type?: string;
+    isBroken?: boolean;
+    break?: () => void;
 }
 
 // --- RESOURCE CACHE (Optimization) ---
@@ -138,11 +141,24 @@ export class Prop {
     type: 'tree' | 'rock' | 'crystal' | 'grass' | 'landmark';
     position: THREE.Vector3;
     radius: number;
+    isBroken: boolean = false;
+    visuals: Array<{ mesh: THREE.InstancedMesh, index: number }> = [];
 
     constructor(type: 'tree' | 'rock' | 'crystal' | 'grass' | 'landmark', position: THREE.Vector3, radius: number) {
         this.type = type;
         this.position = position;
         this.radius = radius;
+    }
+
+    break() {
+        if (this.isBroken) return;
+        this.isBroken = true;
+        this.visuals.forEach(v => {
+            // Hide the instance by scaling it to zero
+            const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+            v.mesh.setMatrixAt(v.index, zero);
+            v.mesh.instanceMatrix.needsUpdate = true;
+        });
     }
 }
 
@@ -404,6 +420,7 @@ export class Snake {
     onBoostStart?: () => void;
     onCrash?: () => void;
     onLand?: (impactSpeed: number) => void;
+    onBreak?: (pos: THREE.Vector3, type: string) => void;
     onEnterWater?: () => void;
     onExitWater?: () => void;
 
@@ -686,6 +703,15 @@ export class Snake {
                 const distSq = dx * dx + dz * dz;
                 const minDist = headRadius + obs.radius;
                 if (distSq < minDist * minDist) {
+                    // --- ENHANCED: BREAKABLE ROCKS ---
+                    if (this.isBoosting && obs.type === 'rock' && !obs.isBroken) {
+                        obs.break?.();
+                        if (this.onBreak) this.onBreak(obs.position, obs.type);
+                        continue; // We broke through!
+                    }
+
+                    if (obs.isBroken) continue;
+
                     // Check height - allow jumping over obstacles if snake is high enough
                     // Use radius to estimate obstacle height (trees have larger radius)
                     const obstacleHeight = obs.radius > 3 ? obs.radius * 2 : obs.radius; // Trees have larger radius

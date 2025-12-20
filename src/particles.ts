@@ -265,6 +265,31 @@ export class BurstSystem {
         }
     }
 
+    emitRockPieces(position: THREE.Vector3, count: number) {
+        for (let i = 0; i < count; i++) {
+            if (this.particles.length >= this.maxParticles) break;
+
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 5.0 + Math.random() * 10.0;
+            const vx = Math.cos(angle) * speed;
+            const vy = 5.0 + Math.random() * 8.0;
+            const vz = Math.sin(angle) * speed;
+
+            const life = 0.8 + Math.random() * 0.4;
+            const size = 1.0 + Math.random() * 1.0;
+
+            this.particles.push({
+                position: position.clone(),
+                velocity: new THREE.Vector3(vx, vy, vz),
+                life: life,
+                maxLife: life,
+                size: size,
+                initialSize: size,
+                color: new THREE.Color(0x888888) // Rock gray
+            });
+        }
+    }
+
     reset() {
         this.particles = [];
         // Clear buffer

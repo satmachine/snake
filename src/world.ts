@@ -53,19 +53,17 @@ class Chunk {
     populate(group: THREE.Group) {
         const size = CONFIG.CHUNK_SIZE;
 
-        // Data accumulation containers
-        const matrixMap: Record<string, THREE.Matrix4[]> = {
-            trunk: [],
-            ring: [],
-            rock: [],
-            crystal: [],
-            grass: []
+        // Track category data for batch instancing
+        const categories: Record<string, { props: Prop[], matrices: THREE.Matrix4[] }> = {
+            trunk: { props: [], matrices: [] },
+            ring: { props: [], matrices: [] },
+            rock: { props: [], matrices: [] },
+            crystal: { props: [], matrices: [] },
+            grass: { props: [], matrices: [] }
         };
 
-        // Increased prop count for more vegetation
         const mainCount = 4 + Math.floor(Math.random() * 4);
 
-        // Main props (trees, rocks, crystals)
         for (let i = 0; i < mainCount; i++) {
             const dx = randomFloat(-size / 2, size / 2);
             const dz = randomFloat(-size / 2, size / 2);
@@ -73,32 +71,40 @@ class Chunk {
             const wz = this.z * size + dz;
 
             const biome = getBiome(wx, wz);
-
             if (biome === 'water') continue;
 
             let result: { prop: Prop, matrices: any } | null = null;
 
             if (biome === 'rock') {
                 result = PropFactory.generateRock(wx, wz);
-                if (result) matrixMap.rock.push(result.matrices.rock);
+                if (result) {
+                    categories.rock.props.push(result.prop);
+                    categories.rock.matrices.push(result.matrices.rock);
+                }
             } else if (biome === 'flower') {
                 result = PropFactory.generateCrystal(wx, wz);
                 if (result) {
-                    // Crystals return array of matrices (cluster)
-                    (result.matrices.crystal as THREE.Matrix4[]).forEach(m => matrixMap.crystal.push(m));
+                    (result.matrices.crystal as THREE.Matrix4[]).forEach(m => {
+                        categories.crystal.props.push(result!.prop);
+                        categories.crystal.matrices.push(m);
+                    });
                 }
             } else {
                 const rng = Math.random();
                 if (rng < 0.7) {
                     result = PropFactory.generateTree(wx, wz);
                     if (result) {
-                        matrixMap.trunk.push(result.matrices.trunk);
-                        matrixMap.ring.push(result.matrices.ring);
+                        categories.trunk.props.push(result.prop);
+                        categories.trunk.matrices.push(result.matrices.trunk);
+                        categories.ring.props.push(result.prop);
+                        categories.ring.matrices.push(result.matrices.ring);
                     }
-                }
-                else {
+                } else {
                     result = PropFactory.generateRock(wx, wz);
-                    if (result) matrixMap.rock.push(result.matrices.rock);
+                    if (result) {
+                        categories.rock.props.push(result.prop);
+                        categories.rock.matrices.push(result.matrices.rock);
+                    }
                 }
             }
 
@@ -107,45 +113,50 @@ class Chunk {
             }
         }
 
-        // Add lots of small grass scattered around
         const grassCount = 15 + Math.floor(Math.random() * 20);
         for (let i = 0; i < grassCount; i++) {
             const dx = randomFloat(-size / 2, size / 2);
             const dz = randomFloat(-size / 2, size / 2);
             const wx = this.x * size + dx;
             const wz = this.z * size + dz;
-
             const biome = getBiome(wx, wz);
 
-            // Only place grass on grass biome (not water, rock, or flower)
             if (biome === 'grass') {
                 const result = PropFactory.generateGrass(wx, wz);
                 if (result) {
-                    (result.matrices.grass as THREE.Matrix4[]).forEach(m => matrixMap.grass.push(m));
+                    (result.matrices.grass as THREE.Matrix4[]).forEach(m => {
+                        categories.grass.props.push(result.prop);
+                        categories.grass.matrices.push(m);
+                    });
                     this.props.push(result.prop);
                 }
             }
         }
 
-        // Create Instanced Meshes
-        this.createInstancedMesh(group, matrixMap.trunk, ASSETS.geoTreeTrunk, ASSETS.matTree, true);
-        this.createInstancedMesh(group, matrixMap.ring, ASSETS.geoTreeRing, ASSETS.matRing, true, true);
-        this.createInstancedMesh(group, matrixMap.rock, ASSETS.geoRock, ASSETS.matRock, true);
-        this.createInstancedMesh(group, matrixMap.crystal, ASSETS.geoCrystal, ASSETS.matCrystal, false);
-        this.createInstancedMesh(group, matrixMap.grass, ASSETS.geoGrass, ASSETS.matGrass, false);
+        // Create Instanced Meshes and link props
+        this.createInstancedMesh(group, categories.trunk.props, categories.trunk.matrices, ASSETS.geoTreeTrunk, ASSETS.matTree, true);
+        this.createInstancedMesh(group, categories.ring.props, categories.ring.matrices, ASSETS.geoTreeRing, ASSETS.matRing, true, true);
+        this.createInstancedMesh(group, categories.rock.props, categories.rock.matrices, ASSETS.geoRock, ASSETS.matRock, true);
+        this.createInstancedMesh(group, categories.crystal.props, categories.crystal.matrices, ASSETS.geoCrystal, ASSETS.matCrystal, false);
+        this.createInstancedMesh(group, categories.grass.props, categories.grass.matrices, ASSETS.geoGrass, ASSETS.matGrass, false);
     }
 
-    createInstancedMesh(group: THREE.Group, matrices: THREE.Matrix4[], geo: THREE.BufferGeometry, mat: THREE.Material, shadows: boolean, randomizeBrightness: boolean = false) {
+    createInstancedMesh(group: THREE.Group, props: Prop[], matrices: THREE.Matrix4[], geo: THREE.BufferGeometry, mat: THREE.Material, shadows: boolean, randomizeBrightness: boolean = false) {
         if (matrices.length === 0) return;
 
         const mesh = new THREE.InstancedMesh(geo, mat, matrices.length);
-        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); // Assuming static mostly but cleaner API
+        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
         const color = new THREE.Color();
         for (let i = 0; i < matrices.length; i++) {
             mesh.setMatrixAt(i, matrices[i]);
+
+            // Link prop to this mesh instance for breaking/hiding
+            if (props[i]) {
+                props[i].visuals.push({ mesh, index: i });
+            }
+
             if (randomizeBrightness) {
-                // Vary brightness by 20% (0.8 to 1.0)
                 const v = 0.8 + Math.random() * 0.2;
                 color.setRGB(v, v, v);
                 mesh.setColorAt(i, color);
