@@ -17,18 +17,25 @@ const ASSETS = {
         roughness: 0.1, 
         flatShading: true 
     }),
-    matRing: new THREE.MeshBasicMaterial({ color: CONFIG.COLORS.UI_ACCENT }),
+    matRing: new THREE.MeshStandardMaterial({ 
+        color: CONFIG.COLORS.UI_ACCENT,
+        emissive: CONFIG.COLORS.UI_ACCENT,
+        emissiveIntensity: 5.0,
+        roughness: 0.0,
+        flatShading: true
+    }),
     matRock: new THREE.MeshStandardMaterial({ 
         color: CONFIG.COLORS.OBSTACLE_LIGHT,
         roughness: 0.6,
-        flatShading: true
+        flatShading: true,
+        emissiveIntensity: 0.8,
     }),
     matCrystal: new THREE.MeshStandardMaterial({ 
         color: CONFIG.COLORS.CRYSTAL,
         roughness: 0.0,
         metalness: 0.2,
         emissive: CONFIG.COLORS.CRYSTAL,
-        emissiveIntensity: 0.4, 
+        emissiveIntensity: 0.8, 
         flatShading: true,
         transparent: true,
         opacity: 0.9
@@ -38,9 +45,9 @@ const ASSETS = {
     geoApple: new THREE.IcosahedronGeometry(0.5, 0),
     matApple: new THREE.MeshStandardMaterial({ 
         color: CONFIG.COLORS.APPLE, 
-        roughness: 0.1,
+        roughness: 0.0,
         emissive: CONFIG.COLORS.APPLE_EMISSIVE,
-        emissiveIntensity: 1.5,
+        emissiveIntensity: 6.0,
         flatShading: true
     })
 };
@@ -189,8 +196,8 @@ export class Snake {
     this.headMat = new THREE.MeshStandardMaterial({ 
         color: CONFIG.COLORS.SNAKE_HEAD,
         emissive: CONFIG.COLORS.SNAKE_HEAD,
-        emissiveIntensity: 0.6,
-        roughness: 0.2,
+        emissiveIntensity: 1.2,
+        roughness: 0.0,
         flatShading: true
     });
     
@@ -202,7 +209,7 @@ export class Snake {
         flatShading: true
     });
 
-    this.playerLight = new THREE.PointLight(CONFIG.COLORS.SNAKE_EMISSIVE, 0.8, 15);
+    this.playerLight = new THREE.PointLight(CONFIG.COLORS.SNAKE_EMISSIVE, 2.0, 20);
     this.playerLight.position.y = 2;
     this.mesh.add(this.playerLight);
 
@@ -506,10 +513,10 @@ export class Snake {
       
       if (this.isStalled) {
           const warnPulse = (Math.sin(time * 10) + 1) * 0.5; 
-          this.headMat.emissiveIntensity = 0.6 + warnPulse * 1.0;
+          this.headMat.emissiveIntensity = 1.2 + warnPulse * 1.0;
           this.headMat.color.setHex(CONFIG.COLORS.APPLE); 
       } else {
-          this.headMat.emissiveIntensity = 0.6;
+          this.headMat.emissiveIntensity = 1.2;
           this.headMat.color.setHex(CONFIG.COLORS.SNAKE_HEAD);
       }
 
@@ -556,7 +563,8 @@ interface Apple {
     isFalling: boolean;
     landed: boolean;
     time: number;
-    baseY?: number; 
+    baseY?: number;
+    light?: THREE.PointLight;
 }
 
 export class AppleManager {
@@ -595,7 +603,7 @@ export class AppleManager {
           velocity: new THREE.Vector3(0, 0, 0),
           isFalling: true,
           landed: false,
-          time: Math.random() * 100 
+          time: Math.random() * 100
       });
   }
   
@@ -604,14 +612,30 @@ export class AppleManager {
       const eatDist = 2.5; // Slightly larger eat radius for air grabs
       const headPos = this.snake.bodyMeshes[0].position;
       const cullDistSq = CONFIG.APPLE_CULL_DIST * CONFIG.APPLE_CULL_DIST;
+      const lightDistSq = 50 * 50; // Only add lights to apples within 50 units
       
       for (let i = this.activeApples.length - 1; i >= 0; i--) {
           const apple = this.activeApples[i];
+          const distSqToHead = headPos.distanceToSquared(apple.mesh.position);
 
-          if (headPos.distanceToSquared(apple.mesh.position) > cullDistSq) {
+          if (distSqToHead > cullDistSq) {
+              if (apple.light) {
+                  apple.mesh.remove(apple.light);
+              }
               this.scene.remove(apple.mesh);
               this.activeApples.splice(i, 1);
               continue; 
+          }
+
+          // Only add lights to nearby apples for performance
+          if (distSqToHead < lightDistSq && !apple.light) {
+              const appleLight = new THREE.PointLight(0xFF4081, 1.2, 8);
+              appleLight.position.set(0, 0, 0);
+              apple.mesh.add(appleLight);
+              apple.light = appleLight;
+          } else if (distSqToHead >= lightDistSq && apple.light) {
+              apple.mesh.remove(apple.light);
+              apple.light = undefined;
           }
 
           if (apple.isFalling) {
@@ -644,6 +668,9 @@ export class AppleManager {
           
           if (distSq < eatDist * eatDist) {
               const pos = apple.mesh.position.clone();
+              if (apple.light) {
+                  apple.mesh.remove(apple.light);
+              }
               this.scene.remove(apple.mesh);
               this.activeApples.splice(i, 1);
               
@@ -659,6 +686,9 @@ export class AppleManager {
   
   reset() {
       for(const a of this.activeApples) {
+          if (a.light) {
+              a.mesh.remove(a.light);
+          }
           this.scene.remove(a.mesh);
       }
       this.activeApples = [];

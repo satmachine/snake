@@ -92,8 +92,8 @@ export function getTerrainHeight(x: number, z: number): number {
     // Layer 1: Base Rolling Hills
     const n1 = noise2D(x * scale, z * scale);
     
-    // Layer 2: Micro Detail (Roughness)
-    const n2 = noise2D(x * scale * 4, z * scale * 4) * 0.1;
+    // Layer 2: Micro Detail (Roughness) - Reduced for smoother terrain
+    const n2 = noise2D(x * scale * 4, z * scale * 4) * 0.05;
     
     // Layer 3: Large Mountains impact
     const n3 = noise2D(x * scale * 0.3, z * scale * 0.3);

@@ -15,10 +15,8 @@ class Chunk {
       this.z = zIdx;
       
       const size = CONFIG.CHUNK_SIZE;
-      // Optimization: Reduced segments from 48 to 32. 
-      // 32*32*2 tris is significantly lighter on draw calls and vertex processing
-      // while preserving 'low poly' look.
-      const segs = 32; 
+      // Increased segments for smoother terrain
+      const segs = 64; 
       
       const geo = new THREE.PlaneGeometry(size, size, segs, segs);
       

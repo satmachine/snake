@@ -93,7 +93,7 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; 
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.1; 
+    this.renderer.toneMappingExposure = 1.3; 
     document.body.appendChild(this.renderer.domElement);
     
     this.ui = new UI();
@@ -108,10 +108,10 @@ export class Game {
         this.startGame();
     };
 
-    const hemiLight = new THREE.HemisphereLight(CONFIG.COLORS.SKY_TOP, CONFIG.COLORS.GROUND_BASE, 0.7);
+    const hemiLight = new THREE.HemisphereLight(CONFIG.COLORS.SKY_TOP, CONFIG.COLORS.GROUND_BASE, 0.4);
     this.scene.add(hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xFFE0B2, 1.2);
+    this.sunLight = new THREE.DirectionalLight(0xFFE0B2, 0.7);
     this.sunLight.position.set(50, 100, 50); 
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.width = 1024; // Reduced from 2048

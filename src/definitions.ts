@@ -15,19 +15,19 @@ export const CONFIG = {
   MAX_SPEED: 50.0, 
 
   // Slope Physics & Gravity (Enhanced for Air Time)
-  GRAVITY_ACCEL: 15.0,     // Speed gain/loss on slopes
+  GRAVITY_ACCEL: 30.0,     // Speed gain/loss on slopes
   PHYSICS_GRAVITY: 60.0,   // Vertical gravity force (m/s^2) for falling
   FRICTION: 2.0,           // Natural drag
   MIN_STALL_SPEED: 4.0,    // Speed at which control becomes sluggish
-  MAX_DOWNHILL_SPEED: 60.0,// Cap for gravity stacking
-  SLOPE_SENSITIVITY: 1.2,  // Terrain angle affects physics
+  MAX_DOWNHILL_SPEED: 80.0,// Cap for gravity stacking
+  SLOPE_SENSITIVITY: 2.0,  // Terrain angle affects physics
 
   // Air Handling
   AIR_CONTROL: 0.3,        // Reduced steering while in air
   JUMP_ASSIST: 10.0,       // Slight pop when leaving ramps to feel less sticky
 
   // World Generation - Optimized
-  TERRAIN_SCALE: 0.006, 
+  TERRAIN_SCALE: 0.004, 
   TERRAIN_HEIGHT: 14.0,    // Made taller for better cliffs
   CHUNK_SIZE: 100,      
   RENDER_DISTANCE: 3,   
@@ -56,8 +56,8 @@ export const CONFIG = {
     SNAKE_BODY: 0x00B8D4, 
     SNAKE_EMISSIVE: 0x00E5FF,
 
-    APPLE: 0xFF4081,        
-    APPLE_EMISSIVE: 0xFF4081,
+    APPLE: 0xFF69B4,        
+    APPLE_EMISSIVE: 0xFF1493,
     
     GROUND_BASE: 0xFFE0B2,  
     GROUND_HIGH: 0xFFCCBC,  
