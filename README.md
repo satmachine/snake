@@ -4,5 +4,5 @@ Snake, but infinite! Play when you want to switch off. Share your highest score 
 
 # But why?
 
-...
+... because it's fun!
 
