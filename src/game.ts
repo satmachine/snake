@@ -438,11 +438,18 @@ export class Game {
         const turn = (this.keys.right ? 1 : 0) - (this.keys.left ? 1 : 0);
         this.snake.setTurn(turn);
 
-        if (this.keys.boost && !this.snake.isBoosting && this.ep >= CONFIG.EP_COST_BOOST) {
-            this.ep -= CONFIG.EP_COST_BOOST;
-            this.snake.triggerBoost();
-            this.ui.updateEp(this.ep, this.maxEp);
+        // --- BOOST LOGIC (Continuous) ---
+        if (this.keys.boost && this.ep > 0) {
+            this.snake.setBoosting(true);
+            this.ep = Math.max(0, this.ep - CONFIG.EP_DRAIN_PER_SEC * dt);
+        } else {
+            this.snake.setBoosting(false);
+            // Slow EP regeneration when not boosting and not stalled
+            if (!this.snake.isStalled) {
+                this.ep = Math.min(this.maxEp, this.ep + dt * 2.0);
+            }
         }
+        this.ui.updateEp(this.ep, this.maxEp);
 
         this.world.update(this.snake.position.x, this.snake.position.z);
 
@@ -452,12 +459,6 @@ export class Game {
 
         const obstacles = this.world.getObstacles();
         const alive = this.snake.update(dt, obstacles);
-
-        // Slow EP regeneration, but stalling halts it
-        if (!this.snake.isStalled) {
-            this.ep = Math.min(this.maxEp, this.ep + dt * 2.0);
-            this.ui.updateEp(this.ep, this.maxEp);
-        }
 
         if (!alive) this.gameOver();
 

@@ -458,7 +458,6 @@ export class Snake {
         this.isAirborne = false;
 
         this.isBoosting = false;
-        this.boostTimer = 0;
         this.invulnerableTimer = 2.0;
         this.isStalled = false;
 
@@ -495,14 +494,11 @@ export class Snake {
         this.playerLight.color.setHex(palette.colors.SNAKE_EMISSIVE);
     }
 
-    triggerBoost() {
-        if (this.isBoosting) {
-            this.boostTimer = CONFIG.BOOST_DURATION;
-        } else {
-            this.isBoosting = true;
-            this.boostTimer = CONFIG.BOOST_DURATION;
+    setBoosting(val: boolean) {
+        if (val && !this.isBoosting) {
             if (this.onBoostStart) this.onBoostStart();
         }
+        this.isBoosting = val;
     }
 
     addSegment(isHead: boolean) {
@@ -522,9 +518,7 @@ export class Snake {
         // --- 1. HORIZONTAL VELOCITY ---
         let engineSpeed = this.targetBaseSpeed;
         if (this.isBoosting) {
-            this.boostTimer -= dt;
             engineSpeed *= CONFIG.BOOST_SPEED_MULTIPLIER;
-            if (this.boostTimer <= 0) this.isBoosting = false;
         }
 
         // Look ahead logic for slope forces (only applies when on ground)

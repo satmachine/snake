@@ -220,10 +220,9 @@ export const CONFIG = {
 
   // Boost & EP
   BOOST_SPEED_MULTIPLIER: 1.8,
-  BOOST_DURATION: 1.5,
   MAX_EP: 100,
   EP_PER_APPLE: 30,
-  EP_COST_BOOST: 30,
+  EP_DRAIN_PER_SEC: 40.0, // Drains full bar in 2.5s
 
   // Apple Mechanics
   APPLE_ROT_TIME: 30.0,

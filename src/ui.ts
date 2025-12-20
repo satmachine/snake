@@ -140,7 +140,7 @@ export class UI {
             font-family: inherit;
         ">INITIALIZE</button>
         <div style="margin-top: 30px; font-size: 10px; color: #666; letter-spacing: 1px;">
-            [A/D / TOUCH SIDES] STEER &nbsp; &nbsp; [SPACE] BOOST &nbsp; &nbsp; [1-4] SEASONS
+            [A/D / TOUCH SIDES] STEER &nbsp; &nbsp; [HOLD SPACE] BOOST &nbsp; &nbsp; [1-4] SEASONS
         </div>
     `;
         this.container.appendChild(this.menuEl);
@@ -217,7 +217,7 @@ export class UI {
         const pct = Math.min(100, Math.max(0, (current / max) * 100));
         this.epBarEl.style.width = `${pct}%`;
 
-        if (current >= CONFIG.EP_COST_BOOST) {
+        if (current > 0) {
             this.epBarEl.style.backgroundColor = this.currentAccentColor;
             this.epBarEl.style.boxShadow = `0 0 15px ${this.currentAccentColor}`;
         } else {
