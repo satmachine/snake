@@ -32,7 +32,7 @@ export const CONFIG = {
   CHUNK_SIZE: 100,      
   RENDER_DISTANCE: 3,   
   FOG_DIST: 180,        
-  WATER_LEVEL: -10.0,   
+  WATER_LEVEL: -20.0,   
   
   // Physics
   MAX_CLIMBABLE_SLOPE: 2.5, 

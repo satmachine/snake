@@ -70,6 +70,9 @@ export class Game {
 
   sunLight!: THREE.DirectionalLight;
   skyMesh!: THREE.Mesh;
+  underwaterOverlay!: HTMLDivElement;
+  lastRippleTime: number = 0;
+  lastTrailPosition: THREE.Vector3 = new THREE.Vector3();
 
   dayTime: number = 0; 
 
@@ -134,6 +137,22 @@ export class Game {
         // Emit dust on landing
         this.burstSystem.emit(this.snake.position, Math.floor(speed * 0.5));
     };
+    this.snake.onEnterWater = () => {
+        // Emit bubbles when entering water
+        this.burstSystem.emitBubbles(this.snake.position, 40);
+        // Play splash sound
+        this.audio.playWaterSplash();
+        // Start continuous water sound
+        this.audio.startWaterSound();
+    };
+    this.snake.onExitWater = () => {
+        // Emit splash particles when exiting water
+        this.burstSystem.emit(this.snake.position, 20);
+        // Play exit splash sound
+        this.audio.playWaterSplash();
+        // Stop continuous water sound
+        this.audio.stopWaterSound();
+    };
 
     this.appleManager = new AppleManager(this.scene, this.snake);
     
@@ -143,6 +162,9 @@ export class Game {
     };
     
     this.dust = new DustSystem(this.scene);
+    
+    // Create underwater overlay
+    this.createUnderwaterOverlay();
 
     window.addEventListener('keydown', (e) => this.handleKey(e, true));
     window.addEventListener('keyup', (e) => this.handleKey(e, false));
@@ -205,6 +227,9 @@ export class Game {
     this.score = 0;
     this.ep = CONFIG.MAX_EP;
     this.dayTime = 0;
+    
+    // Stop any water sounds from previous game
+    this.audio.stopWaterSound();
     
     this.ui.updateScore(0);
     this.ui.updateEp(this.ep, this.maxEp);
@@ -330,6 +355,54 @@ export class Game {
         
         this.updateCamera(dt);
         this.dust.update(this.camera.position);
+        
+        // Update underwater visual effects
+        this.updateUnderwaterEffects();
+        
+        // Water trail and ripple effects when underwater
+        if (this.snake.isUnderwater) {
+            // Update water sound based on speed
+            this.audio.updateWaterSound(this.snake.actualSpeed);
+            
+            // Reduced bubble particles - only occasional
+            if (Math.random() < 0.1) {
+                this.burstSystem.emitBubbles(
+                    this.snake.position.clone().add(new THREE.Vector3(
+                        (Math.random() - 0.5) * 2,
+                        (Math.random() - 0.5) * 1,
+                        (Math.random() - 0.5) * 2
+                    )),
+                    1
+                );
+            }
+            
+            // Enhanced water trail behind the snake
+            const snakeDirection = new THREE.Vector3(
+                Math.cos(this.snake.angle),
+                0,
+                Math.sin(this.snake.angle)
+            );
+            // Emit trail more frequently for smoother effect
+            if (Math.random() < 0.8) {
+                this.burstSystem.emitWaterTrail(
+                    this.snake.position,
+                    snakeDirection,
+                    this.snake.actualSpeed
+                );
+            }
+            
+            // More frequent ripples for better wave effect
+            const currentTime = time / 1000;
+            if (currentTime - this.lastRippleTime > 0.15) {
+                this.burstSystem.emitRipples(this.snake.position, 16);
+                this.lastRippleTime = currentTime;
+            }
+        } else {
+            // Stop water sound if not underwater
+            if (this.audio.isWaterSoundPlaying) {
+                this.audio.stopWaterSound();
+            }
+        }
     } 
     else if (this.state === GameState.GAME_OVER || this.state === GameState.MENU) {
         const t = time * 0.0001;
@@ -395,10 +468,43 @@ export class Game {
       this.skyMesh.position.copy(headPos); 
   }
 
+  createUnderwaterOverlay() {
+      this.underwaterOverlay = document.createElement('div');
+      this.underwaterOverlay.style.position = 'fixed';
+      this.underwaterOverlay.style.top = '0';
+      this.underwaterOverlay.style.left = '0';
+      this.underwaterOverlay.style.width = '100%';
+      this.underwaterOverlay.style.height = '100%';
+      this.underwaterOverlay.style.pointerEvents = 'none';
+      this.underwaterOverlay.style.zIndex = '1000';
+      this.underwaterOverlay.style.background = 'linear-gradient(to bottom, rgba(0, 100, 200, 0.3) 0%, rgba(0, 150, 255, 0.4) 50%, rgba(0, 100, 200, 0.3) 100%)';
+      this.underwaterOverlay.style.opacity = '0';
+      this.underwaterOverlay.style.transition = 'opacity 0.3s ease';
+      document.body.appendChild(this.underwaterOverlay);
+  }
+
+  updateUnderwaterEffects() {
+      if (this.snake.isUnderwater) {
+          // Show underwater overlay with depth-based intensity
+          const depth = Math.max(0, CONFIG.WATER_LEVEL - this.snake.position.y);
+          const intensity = Math.min(0.7, depth * 0.05);
+          this.underwaterOverlay.style.opacity = intensity.toString();
+          
+          // Add slight blue tint to renderer
+          this.renderer.setClearColor(new THREE.Color(0x001122), 1.0);
+      } else {
+          // Hide overlay
+          this.underwaterOverlay.style.opacity = '0';
+          // Reset clear color
+          this.renderer.setClearColor(new THREE.Color(0x000000), 1.0);
+      }
+  }
+
   gameOver() {
       if (this.state === GameState.GAME_OVER) return;
       this.audio.playCrash();
       this.audio.stopMusic();
+      this.audio.stopWaterSound();
       this.state = GameState.GAME_OVER;
       this.ui.showGameOver(this.score);
   }

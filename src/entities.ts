@@ -43,6 +43,12 @@ const ASSETS = {
     geoRock: new THREE.DodecahedronGeometry(1.0, 0),
     geoCrystal: new THREE.CylinderGeometry(0, 0.3, 1, 5),
     geoApple: new THREE.IcosahedronGeometry(0.5, 0),
+    geoGrass: new THREE.ConeGeometry(0.2, 1.5, 4),
+    matGrass: new THREE.MeshStandardMaterial({ 
+        color: 0x4CAF50,
+        roughness: 0.8,
+        flatShading: true
+    }),
     matApple: new THREE.MeshStandardMaterial({ 
         color: CONFIG.COLORS.APPLE, 
         roughness: 0.0,
@@ -55,12 +61,12 @@ const ASSETS = {
 // --- PROPS (Static World Objects) ---
 export class Prop {
     mesh: THREE.Group;
-    type: 'tree' | 'rock' | 'crystal';
+    type: 'tree' | 'rock' | 'crystal' | 'grass';
     radius: number; 
     
     get position(): THREE.Vector3 { return this.mesh.position; }
 
-    constructor(mesh: THREE.Group, type: 'tree' | 'rock' | 'crystal', radius: number) {
+    constructor(mesh: THREE.Group, type: 'tree' | 'rock' | 'crystal' | 'grass', radius: number) {
         this.mesh = mesh;
         this.type = type;
         this.radius = radius;
@@ -75,8 +81,23 @@ export class PropFactory {
         const group = new THREE.Group();
         group.position.set(x, height, z);
 
-        const h = randomFloat(15.0, 30.0);
-        const w = randomFloat(2.5, 5.0);
+        // Increased variability: most trees normal size, but some can be massive
+        // Use weighted random to favor smaller trees but allow massive ones
+        const rand = Math.random();
+        let h, w;
+        if (rand < 0.7) {
+            // 70% normal trees (15-30)
+            h = randomFloat(15.0, 30.0);
+            w = randomFloat(2.5, 5.0);
+        } else if (rand < 0.9) {
+            // 20% large trees (30-50)
+            h = randomFloat(30.0, 50.0);
+            w = randomFloat(5.0, 8.0);
+        } else {
+            // 10% massive trees (50-80)
+            h = randomFloat(50.0, 80.0);
+            w = randomFloat(8.0, 12.0);
+        }
         
         const geo = new THREE.CylinderGeometry(0, w, h, 4, 1);
         const mesh = new THREE.Mesh(geo, ASSETS.matTree);
@@ -145,6 +166,31 @@ export class PropFactory {
         group.updateMatrix();
         return new Prop(group, 'crystal', 1.2);
     }
+
+    static createGrass(x: number, z: number): Prop {
+        const height = getTerrainHeight(x, z);
+        const group = new THREE.Group();
+        group.position.set(x, height, z);
+
+        // Create a small cluster of grass
+        const count = 2 + Math.floor(Math.random() * 3);
+        for(let i=0; i<count; i++) {
+            const scale = 0.6 + Math.random() * 0.4;
+            const mesh = new THREE.Mesh(ASSETS.geoGrass, ASSETS.matGrass);
+            
+            mesh.scale.setScalar(scale);
+            mesh.position.x = randomFloat(-0.3, 0.3);
+            mesh.position.z = randomFloat(-0.3, 0.3);
+            mesh.rotation.y = randomFloat(0, Math.PI * 2);
+            mesh.position.y = scale * 0.75;
+            mesh.updateMatrix();
+            
+            group.add(mesh);
+        }
+        
+        group.updateMatrix();
+        return new Prop(group, 'grass', 0.3);
+    }
 }
 
 // --- SNAKE ---
@@ -172,10 +218,14 @@ export class Snake {
   
   invulnerableTimer: number = 0;
   isStalled: boolean = false;
+  isUnderwater: boolean = false;
+  wasUnderwater: boolean = false;
 
   onBoostStart?: () => void;
   onCrash?: () => void;
   onLand?: (impactSpeed: number) => void;
+  onEnterWater?: () => void;
+  onExitWater?: () => void;
   
   playerLight: THREE.PointLight;
 
@@ -412,8 +462,9 @@ export class Snake {
     }
     
     // --- 5. OBSTACLE COLLISION ---
-    if (slope > CONFIG.MAX_CLIMBABLE_SLOPE && this.invulnerableTimer <= 0 && !this.isAirborne) {
-        // Only crash on walls if on ground
+    // Only crash on very steep slopes, and give some tolerance
+    if (slope > CONFIG.MAX_CLIMBABLE_SLOPE * 1.2 && this.invulnerableTimer <= 0 && !this.isAirborne && this.actualSpeed > 5) {
+        // Only crash on walls if on ground and moving fast enough
         if (this.onCrash) this.onCrash();
         return false;
     }
@@ -431,10 +482,11 @@ export class Snake {
              const distSq = dx*dx + dz*dz;
              const minDist = headRadius + obs.radius;
              if (distSq < minDist * minDist) {
-                 // Check height - allows jumping over small rocks?
-                 // Obstacles are usually tall trees or big rocks.
-                 // Let's assume infinite height collision for simplicity or check Y relative to prop
-                 if (this.position.y < obs.position.y + 5) {
+                 // Check height - allow jumping over obstacles if snake is high enough
+                 // Use radius to estimate obstacle height (trees have larger radius)
+                 const obstacleHeight = obs.radius > 3 ? obs.radius * 2 : obs.radius; // Trees have larger radius
+                 const clearance = obs.radius > 3 ? 8.0 : 2.0; // More clearance for larger obstacles (trees)
+                 if (this.position.y < obs.position.y + obstacleHeight + clearance) {
                     if (this.onCrash) this.onCrash();
                     return false;
                  }
@@ -446,6 +498,18 @@ export class Snake {
     this.position.x = nextX;
     this.position.z = nextZ;
     // Y already applied
+
+    // Check if underwater
+    this.wasUnderwater = this.isUnderwater;
+    this.isUnderwater = this.position.y < CONFIG.WATER_LEVEL + 1.0;
+    
+    // Trigger water entry/exit events
+    if (this.isUnderwater && !this.wasUnderwater && this.onEnterWater) {
+        this.onEnterWater();
+    }
+    if (!this.isUnderwater && this.wasUnderwater && this.onExitWater) {
+        this.onExitWater();
+    }
 
     // Record Path (3D)
     this.path.unshift(this.position.clone()); // Store full 3D vector
@@ -462,22 +526,23 @@ export class Snake {
         this.growPending--;
     }
 
-    // 6. SELF COLLISION
-    if (this.invulnerableTimer <= 0) {
-        const grace = 20; 
-        const hitDist = CONFIG.SEGMENT_RADIUS * 1.5;
-        for (let i = grace; i < this.bodyMeshes.length; i++) {
+    // 6. SELF COLLISION - Optimized with early exit
+    if (this.invulnerableTimer <= 0 && this.bodyMeshes.length > 25) {
+        const grace = 25; // Increased grace period
+        const hitDist = CONFIG.SEGMENT_RADIUS * 1.8; // Slightly more lenient
+        // Only check every 3rd segment for performance
+        for (let i = grace; i < this.bodyMeshes.length; i += 3) {
             const segWorldPos = this.bodyMeshes[i].position;
-            if (Math.abs(this.position.x - segWorldPos.x) > 2) continue;
-            if (Math.abs(this.position.z - segWorldPos.z) > 2) continue; // Note Z check
-
-            const dx = this.position.x - segWorldPos.x;
-            const dz = this.position.z - segWorldPos.z; 
+            const dx = Math.abs(this.position.x - segWorldPos.x);
+            const dz = Math.abs(this.position.z - segWorldPos.z);
             
-            if (dx*dx + dz*dz < hitDist * hitDist) {
-                // Ignore Z height for self collision? Prefer lenient.
-                // If I am jumping OVER my tail, I should be safe.
-                if (Math.abs(this.position.y - segWorldPos.y) < 2.0) {
+            // Early exit optimization
+            if (dx > 3 || dz > 3) continue;
+
+            const distSq = dx*dx + dz*dz;
+            if (distSq < hitDist * hitDist) {
+                // More lenient height check - allow jumping over tail
+                if (Math.abs(this.position.y - segWorldPos.y) < 3.0) {
                     if (this.onCrash) this.onCrash();
                     return false;
                 }

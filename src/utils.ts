@@ -98,8 +98,15 @@ export function getTerrainHeight(x: number, z: number): number {
     // Layer 3: Large Mountains impact
     const n3 = noise2D(x * scale * 0.3, z * scale * 0.3);
     const mtn = Math.max(0, n3) * 2.0;
+    
+    // Layer 4: Valleys/Lakes - Create more low-lying areas for water
+    const valleyNoise = noise2D(x * scale * 0.15, z * scale * 0.15);
+    const valleys = Math.min(0, valleyNoise) * 1.5; // Only negative values, creates depressions
 
-    let h = (n1 + n2 + mtn) * CONFIG.TERRAIN_HEIGHT; 
+    let h = (n1 + n2 + mtn + valleys) * CONFIG.TERRAIN_HEIGHT; 
+    
+    // Add bias to create more water areas (shift terrain down slightly)
+    h -= CONFIG.TERRAIN_HEIGHT * 0.15;
     
     // Water floor clamping
     if (h < CONFIG.WATER_LEVEL) h = CONFIG.WATER_LEVEL; 
@@ -123,7 +130,8 @@ export function getTerrainNormal(x: number, z: number): THREE.Vector3 {
 // Biome Calculation
 export function getBiome(x: number, z: number): 'grass' | 'rock' | 'flower' | 'water' {
     const h = getTerrainHeight(x, z);
-    if (h <= CONFIG.WATER_LEVEL + 0.2) return 'water';
+    // Increased threshold for water detection to create more lakes
+    if (h <= CONFIG.WATER_LEVEL + 2.0) return 'water';
 
     const n = getTerrainNormal(x, z);
     const slope = 1.0 - n.y;

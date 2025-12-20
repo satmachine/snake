@@ -124,6 +124,118 @@ export class AudioManager {
       osc.stop(t + 2.0);
   }
 
+  // Water sound effects
+  waterNoiseNode: AudioBufferSourceNode | null = null;
+  waterGainNode: GainNode | null = null;
+  isWaterSoundPlaying: boolean = false;
+
+  playWaterSplash() {
+      if (!this.ctx || !this.masterGain) return;
+      const t = this.ctx.currentTime;
+      
+      // Create a splash sound with noise and filtered frequencies
+      const noise = this.ctx.createBufferSource();
+      const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.3, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+          data[i] = Math.random() * 2 - 1;
+      }
+      noise.buffer = buffer;
+      
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 800;
+      filter.Q.value = 2;
+      
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.15, t);
+      gain.gain.exponentialRampToValueAtTime(0.01, t + 0.3);
+      
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+      
+      noise.start(t);
+      noise.stop(t + 0.3);
+      
+      // Add a low "plop" tone
+      const osc = this.ctx.createOscillator();
+      const oscGain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(150, t);
+      osc.frequency.exponentialRampToValueAtTime(80, t + 0.2);
+      
+      oscGain.gain.setValueAtTime(0.1, t);
+      oscGain.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+      
+      osc.connect(oscGain);
+      oscGain.connect(this.masterGain);
+      
+      osc.start(t);
+      osc.stop(t + 0.2);
+  }
+
+  startWaterSound() {
+      if (!this.ctx || !this.masterGain || this.isWaterSoundPlaying) return;
+      this.isWaterSoundPlaying = true;
+      
+      const t = this.ctx.currentTime;
+      
+      // Create continuous water noise
+      const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.5, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+          data[i] = (Math.random() * 2 - 1) * 0.3;
+      }
+      
+      this.waterNoiseNode = this.ctx.createBufferSource();
+      this.waterNoiseNode.buffer = buffer;
+      this.waterNoiseNode.loop = true;
+      
+      // Filter to make it sound like water
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 600;
+      filter.Q.value = 1.5;
+      
+      this.waterGainNode = this.ctx.createGain();
+      this.waterGainNode.gain.value = 0.08;
+      
+      this.waterNoiseNode.connect(filter);
+      filter.connect(this.waterGainNode);
+      this.waterGainNode.connect(this.masterGain);
+      
+      this.waterNoiseNode.start(t);
+  }
+
+  stopWaterSound() {
+      if (this.waterNoiseNode && this.isWaterSoundPlaying) {
+          const t = this.ctx?.currentTime || 0;
+          if (this.waterGainNode) {
+              this.waterGainNode.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+          }
+          setTimeout(() => {
+              try {
+                  this.waterNoiseNode?.stop();
+                  this.waterNoiseNode?.disconnect();
+                  this.waterGainNode?.disconnect();
+              } catch(e) {}
+              this.waterNoiseNode = null;
+              this.waterGainNode = null;
+              this.isWaterSoundPlaying = false;
+          }, 200);
+      }
+  }
+
+  updateWaterSound(speed: number) {
+      if (this.waterGainNode && this.isWaterSoundPlaying) {
+          // Adjust volume and filter based on speed
+          const t = this.ctx?.currentTime || 0;
+          const targetGain = 0.08 + (speed / 50) * 0.05; // Louder when moving faster
+          this.waterGainNode.gain.linearRampToValueAtTime(targetGain, t + 0.1);
+      }
+  }
+
   // --- AMBIENT ENGINE ---
 
   startMusic() {

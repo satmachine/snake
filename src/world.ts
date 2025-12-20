@@ -38,13 +38,34 @@ class Chunk {
           posAttr.setZ(i, h); 
           
           let col = cBase.clone();
-          const t = (h - CONFIG.WATER_LEVEL) / CONFIG.TERRAIN_HEIGHT;
+          const biome = getBiome(worldX, worldZ);
           
-          if (t < 0.2) col.lerp(cLow, 0.8);
-          else if (t > 0.6) col.lerp(cHigh, (t - 0.6) * 2.0);
-          
-          // Reduced noise calculation for colors
-          if (Math.random() > 0.5) col.offsetHSL(0, 0, (Math.random() - 0.5) * 0.04);
+          // Make water blue and also check nearby areas for water borders
+          if (biome === 'water') {
+              const waterBlue = new THREE.Color(0x4A90E2);
+              col.lerp(waterBlue, 0.9);
+          } else {
+              // Check if near water to make borders blue
+              const nearbyWater = getBiome(worldX + 2, worldZ) === 'water' ||
+                                  getBiome(worldX - 2, worldZ) === 'water' ||
+                                  getBiome(worldX, worldZ + 2) === 'water' ||
+                                  getBiome(worldX, worldZ - 2) === 'water';
+              
+              if (nearbyWater && h <= CONFIG.WATER_LEVEL + 3.0) {
+                  // Make water borders blue
+                  const waterBlue = new THREE.Color(0x4A90E2);
+                  const blend = Math.max(0, (CONFIG.WATER_LEVEL + 3.0 - h) / 3.0);
+                  col.lerp(waterBlue, blend * 0.7);
+              } else {
+                  const t = (h - CONFIG.WATER_LEVEL) / CONFIG.TERRAIN_HEIGHT;
+                  
+                  if (t < 0.2) col.lerp(cLow, 0.8);
+                  else if (t > 0.6) col.lerp(cHigh, (t - 0.6) * 2.0);
+                  
+                  // Reduced noise calculation for colors
+                  if (Math.random() > 0.5) col.offsetHSL(0, 0, (Math.random() - 0.5) * 0.04);
+              }
+          }
 
           colors.push(col.r, col.g, col.b);
       }
@@ -73,9 +94,11 @@ class Chunk {
   
   populate(group: THREE.Group) {
       const size = CONFIG.CHUNK_SIZE;
-      const count = 3 + Math.floor(Math.random() * 3); // Reduced prop count slightly
+      // Increased prop count for more vegetation
+      const mainCount = 4 + Math.floor(Math.random() * 4);
       
-      for(let i=0; i<count; i++) {
+      // Main props (trees, rocks, crystals)
+      for(let i=0; i<mainCount; i++) {
           const dx = randomFloat(-size/2, size/2);
           const dz = randomFloat(-size/2, size/2);
           const wx = this.x * size + dx;
@@ -100,6 +123,24 @@ class Chunk {
           if (prop) {
               this.props.push(prop);
               group.add(prop.mesh);
+          }
+      }
+      
+      // Add lots of small grass scattered around
+      const grassCount = 15 + Math.floor(Math.random() * 20);
+      for(let i=0; i<grassCount; i++) {
+          const dx = randomFloat(-size/2, size/2);
+          const dz = randomFloat(-size/2, size/2);
+          const wx = this.x * size + dx;
+          const wz = this.z * size + dz;
+          
+          const biome = getBiome(wx, wz);
+          
+          // Only place grass on grass biome (not water, rock, or flower)
+          if (biome === 'grass') {
+              const grass = PropFactory.createGrass(wx, wz);
+              this.props.push(grass);
+              group.add(grass.mesh);
           }
       }
   }
@@ -173,9 +214,9 @@ export class World {
     getObstacles(): Prop[] {
         const obstacles: Prop[] = [];
         this.chunks.forEach(c => {
-            // Filter only collidable types
+            // Filter only collidable types - exclude grass and crystals
             c.props.forEach(p => {
-                if(p.type !== 'crystal' && p.radius > 0) obstacles.push(p);
+                if(p.type !== 'crystal' && p.type !== 'grass' && p.radius > 0.5) obstacles.push(p);
             });
         });
         return obstacles;
