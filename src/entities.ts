@@ -578,6 +578,7 @@ export class Snake {
         } else {
             this.isStalled = false;
         }
+        if (isNaN(this.actualSpeed)) this.actualSpeed = 0;
 
         // --- 2. STEERING ---
         let turnRate = CONFIG.SNAKE_TURN_SPEED;
@@ -595,6 +596,7 @@ export class Snake {
 
         // Vertical Integration (Physics Gravity)
         this.verticalVelocity -= CONFIG.PHYSICS_GRAVITY * dt;
+        if (isNaN(this.verticalVelocity)) this.verticalVelocity = 0;
         const predictedY = this.position.y + this.verticalVelocity * dt;
         const predictedGroundH = getTerrainHeight(nextX, nextZ);
 
@@ -632,7 +634,7 @@ export class Snake {
             const currentGroundH = getTerrainHeight(this.position.x, this.position.z);
             const currentEffectiveGroundH = ((this.isBoosting || this.actualSpeed >= CONFIG.SKIM_SPEED_THRESHOLD) && CONFIG.WATER_LEVEL > currentGroundH) ? CONFIG.WATER_LEVEL : currentGroundH;
 
-            const currentSlope = (effectiveGroundH - currentEffectiveGroundH) / moveDist;
+            const currentSlope = moveDist < 0.0001 ? 0 : (effectiveGroundH - currentEffectiveGroundH) / moveDist;
             const terrainVerticalVel = currentSlope * this.actualSpeed;
 
             if (terrainVerticalVel > this.verticalVelocity) {
@@ -642,6 +644,7 @@ export class Snake {
 
                 // STICK TO GROUND
                 this.verticalVelocity = terrainVerticalVel;
+                if (isNaN(this.verticalVelocity)) this.verticalVelocity = 0;
 
                 // --- JUMP LOGIC ---
                 // If we are moving fast up a slope, add a tiny bit of "pop" so if the slope ends, we fly.
@@ -698,6 +701,10 @@ export class Snake {
         // Apply Position
         this.position.x = nextX;
         this.position.z = nextZ;
+        if (isNaN(this.position.x)) this.position.x = 0;
+        if (isNaN(this.position.y)) this.position.y = 0;
+        if (isNaN(this.position.z)) this.position.z = 0;
+        if (isNaN(this.angle)) this.angle = 0;
         // Y already applied
 
         // Check if underwater (Deep enough to be submerged)
@@ -731,8 +738,6 @@ export class Snake {
         if (this.path.length > approximateSegLimit) {
             this.path.length = approximateSegLimit;
         }
-
-        this.updateBodyVisuals();
 
         if (this.growPending > 0) {
             this.addSegment(false);
@@ -777,8 +782,6 @@ export class Snake {
         const time = Date.now() * 0.002;
 
         // Tilt head based on movement
-        // Pitch: look down if falling, look up if climbing
-        // We can approximate pitch from vertical velocity
         const pitch = Math.max(-0.8, Math.min(0.8, this.verticalVelocity * 0.05));
 
         head.rotation.set(0, 0, 0);
@@ -806,13 +809,11 @@ export class Snake {
             while (currentPathIndex < this.path.length - 1) {
                 const p1 = this.path[currentPathIndex];
                 const p2 = this.path[currentPathIndex + 1];
-                // 3D Distance for air handling
                 const d = p1.distanceTo(p2);
 
                 if (distAccumulator + d >= targetDist) {
                     const alpha = (targetDist - distAccumulator) / d;
 
-                    // Interpolate 3D position
                     mesh.position.lerpVectors(p1, p2, alpha);
 
                     // Gentle generic wobble

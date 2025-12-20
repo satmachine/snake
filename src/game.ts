@@ -99,10 +99,6 @@ export class Game {
 
     dayTime: number = 0;
 
-    // Fixed Timestep Logic
-    fixedTimeStep: number = 1 / 60;
-    accumulator: number = 0;
-
     constructor() {
         this.audio = new AudioManager();
         this.targetPalette = PALETTE_SPRING;
@@ -374,14 +370,8 @@ export class Game {
         this.lastTime = time;
 
         if (this.state === GameState.PLAYING) {
-            this.accumulator += dt;
-
-            // Consume accumulator in fixed steps
-            while (this.accumulator >= this.fixedTimeStep) {
-                this.updatePhysics(this.fixedTimeStep);
-                this.accumulator -= this.fixedTimeStep;
-            }
-
+            // Update physics once per frame with variable dt for maximum smoothness
+            this.updatePhysics(dt);
             this.updateVisuals(dt);
 
             if (this.water) {
@@ -389,15 +379,19 @@ export class Game {
             }
         }
         else if (this.state === GameState.GAME_OVER || this.state === GameState.MENU) {
-            const t = time * 0.0001;
+            const t = (time || 0) * 0.0001;
             this.camera.position.x = Math.cos(t) * 60;
             this.camera.position.z = Math.sin(t) * 60;
             this.camera.position.y = 40;
             this.camera.lookAt(0, 0, 0);
         }
 
-        // this.renderer.render(this.scene, this.camera);
-        this.composer.render();
+        try {
+            this.composer.render();
+        } catch (e) {
+            // If composer fails, fallback to standard render
+            this.renderer.render(this.scene, this.camera);
+        }
     }
 
     updatePhysics(dt: number) {
@@ -453,6 +447,7 @@ export class Game {
 
     updateVisuals(dt: number) {
         this.updateSeason(dt);
+        this.snake.updateBodyVisuals();
         this.updateCamera(dt);
         this.dust.update(this.camera.position);
 
@@ -509,14 +504,16 @@ export class Game {
         if (!this.snake.bodyMeshes.length) return;
 
         const head = this.snake.bodyMeshes[0];
-        const headPos = head.position.clone();
+        const headPos = head.position; // Already interpolated in updateBodyVisuals
         const snakeAngle = this.snake.angle;
 
         let diff = snakeAngle - this.cameraAngle;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
 
+        if (isNaN(diff)) diff = 0;
         this.cameraAngle += diff * (1.2 * dt);
+        if (isNaN(this.cameraAngle)) this.cameraAngle = 0;
 
         // Dynamic camera distance based on speed vs base speed
         const speedRatio = this.snake.actualSpeed / this.snake.targetBaseSpeed;
@@ -618,7 +615,10 @@ export class Game {
         // 2. Smoothly lerp visualPalette toward targetPalette
         const p = this.visualPalette;
         const t = this.targetPalette;
+        if (!p || !t) return;
+
         const alpha = Math.min(1.0, dt * 1.5); // Transition speed factor
+        if (isNaN(alpha)) return;
 
         const lerpColor = (c1: number, c2: number) => {
             const color1 = new THREE.Color(c1);
