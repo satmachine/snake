@@ -11,31 +11,32 @@ export interface Obstacle {
 }
 
 // --- RESOURCE CACHE (Optimization) ---
-const ASSETS = {
-    matTree: new THREE.MeshStandardMaterial({ 
-        color: CONFIG.COLORS.OBSTACLE_DARK, 
-        roughness: 0.1, 
-        flatShading: true 
+// --- RESOURCE CACHE (Optimization) ---
+export const ASSETS = {
+    matTree: new THREE.MeshStandardMaterial({
+        color: CONFIG.COLORS.OBSTACLE_DARK,
+        roughness: 0.1,
+        flatShading: true
     }),
-    matRing: new THREE.MeshStandardMaterial({ 
+    matRing: new THREE.MeshStandardMaterial({
         color: CONFIG.COLORS.UI_ACCENT,
         emissive: CONFIG.COLORS.UI_ACCENT,
-        emissiveIntensity: 5.0,
+        emissiveIntensity: 2.0, // Softer halo
         roughness: 0.0,
         flatShading: true
     }),
-    matRock: new THREE.MeshStandardMaterial({ 
+    matRock: new THREE.MeshStandardMaterial({
         color: CONFIG.COLORS.OBSTACLE_LIGHT,
         roughness: 0.6,
         flatShading: true,
         emissiveIntensity: 0.8,
     }),
-    matCrystal: new THREE.MeshStandardMaterial({ 
+    matCrystal: new THREE.MeshStandardMaterial({
         color: CONFIG.COLORS.CRYSTAL,
         roughness: 0.0,
         metalness: 0.2,
         emissive: CONFIG.COLORS.CRYSTAL,
-        emissiveIntensity: 0.8, 
+        emissiveIntensity: 0.8,
         flatShading: true,
         transparent: true,
         opacity: 0.9
@@ -44,13 +45,17 @@ const ASSETS = {
     geoCrystal: new THREE.CylinderGeometry(0, 0.3, 1, 5),
     geoApple: new THREE.IcosahedronGeometry(0.5, 0),
     geoGrass: new THREE.ConeGeometry(0.2, 1.5, 4),
-    matGrass: new THREE.MeshStandardMaterial({ 
+    // Tree Geometries
+    geoTreeTrunk: new THREE.CylinderGeometry(0, 1, 1, 4, 1), // Normalized, will scale
+    geoTreeRing: new THREE.TorusGeometry(1.5, 0.2, 4, 12),
+
+    matGrass: new THREE.MeshStandardMaterial({
         color: 0x4CAF50,
         roughness: 0.8,
         flatShading: true
     }),
-    matApple: new THREE.MeshStandardMaterial({ 
-        color: CONFIG.COLORS.APPLE, 
+    matApple: new THREE.MeshStandardMaterial({
+        color: CONFIG.COLORS.APPLE,
         roughness: 0.0,
         emissive: CONFIG.COLORS.APPLE_EMISSIVE,
         emissiveIntensity: 6.0,
@@ -58,567 +63,564 @@ const ASSETS = {
     })
 };
 
-// --- PROPS (Static World Objects) ---
-export class Prop {
-    mesh: THREE.Group;
-    type: 'tree' | 'rock' | 'crystal' | 'grass';
-    radius: number; 
-    
-    get position(): THREE.Vector3 { return this.mesh.position; }
+// Fix geometries center/rotation for easier instancing
+ASSETS.geoTreeTrunk.translate(0, 0.5, 0); // Pivot at bottom
 
-    constructor(mesh: THREE.Group, type: 'tree' | 'rock' | 'crystal' | 'grass', radius: number) {
-        this.mesh = mesh;
+// --- PROPS (Logical World Objects) ---
+export class Prop {
+    type: 'tree' | 'rock' | 'crystal' | 'grass';
+    position: THREE.Vector3;
+    radius: number;
+
+    constructor(type: 'tree' | 'rock' | 'crystal' | 'grass', position: THREE.Vector3, radius: number) {
         this.type = type;
+        this.position = position;
         this.radius = radius;
-        this.mesh.matrixAutoUpdate = false;
-        this.mesh.updateMatrix();
     }
 }
 
 export class PropFactory {
-    static createTree(x: number, z: number): Prop {
+    static generateTree(x: number, z: number) {
         const height = getTerrainHeight(x, z);
-        const group = new THREE.Group();
-        group.position.set(x, height, z);
+        const pos = new THREE.Vector3(x, height, z);
 
-        // Increased variability: most trees normal size, but some can be massive
-        // Use weighted random to favor smaller trees but allow massive ones
+        // Randomize dimensions
         const rand = Math.random();
         let h, w;
-        if (rand < 0.7) {
-            // 70% normal trees (15-30)
-            h = randomFloat(15.0, 30.0);
-            w = randomFloat(2.5, 5.0);
-        } else if (rand < 0.9) {
-            // 20% large trees (30-50)
-            h = randomFloat(30.0, 50.0);
-            w = randomFloat(5.0, 8.0);
-        } else {
-            // 10% massive trees (50-80)
-            h = randomFloat(50.0, 80.0);
-            w = randomFloat(8.0, 12.0);
-        }
-        
-        const geo = new THREE.CylinderGeometry(0, w, h, 4, 1);
-        const mesh = new THREE.Mesh(geo, ASSETS.matTree);
-        mesh.position.y = h / 2;
-        mesh.rotation.y = randomFloat(0, Math.PI);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        mesh.updateMatrix(); 
-        group.add(mesh);
+        if (rand < 0.7) { h = randomFloat(15.0, 30.0); w = randomFloat(2.5, 5.0); }
+        else if (rand < 0.9) { h = randomFloat(30.0, 50.0); w = randomFloat(5.0, 8.0); }
+        else { h = randomFloat(50.0, 80.0); w = randomFloat(8.0, 12.0); }
 
-        const ringGeo = new THREE.TorusGeometry(w * 1.5, 0.2, 4, 12);
-        const ring = new THREE.Mesh(ringGeo, ASSETS.matRing);
-        ring.rotation.x = Math.PI / 2;
-        ring.position.y = h * 0.8;
-        ring.rotation.z = randomFloat(0, Math.PI);
-        ring.updateMatrix();
-        group.add(ring);
+        const rotY = randomFloat(0, Math.PI);
 
-        group.updateMatrix();
+        // Matrix for Trunk
+        const dummy = new THREE.Object3D();
+        dummy.position.copy(pos);
+        dummy.rotation.y = rotY;
+        dummy.scale.set(w, h, w); // Geo is height 1, so scale Y is height
+        dummy.updateMatrix();
+        const trunkMat = dummy.matrix.clone();
 
-        return new Prop(group, 'tree', w * 0.75);
+        // Matrix for Ring
+        dummy.position.y = height + h * 0.8;
+        dummy.rotation.set(Math.PI / 2, 0, 0); // Force strictly horizontal (XZ plane)
+        dummy.scale.set(w, w, w); // Uniform scale for the ring torus? 
+        // Original was: TorusGeometry(w * 1.5, ...)
+        // My new geo is fixed size TorusGeometry(1.5, ...). 
+        // If I scale by w/something? 
+        // Logic check: Old: Ring radius w*1.5. New Geo: 1.5. So scalling by w should work roughly.
+        dummy.updateMatrix();
+        const ringMat = dummy.matrix.clone();
+
+        return {
+            prop: new Prop('tree', pos, w * 0.75),
+            matrices: { trunk: trunkMat, ring: ringMat }
+        };
     }
 
-    static createRock(x: number, z: number): Prop {
+    static generateRock(x: number, z: number) {
         const height = getTerrainHeight(x, z);
-        const group = new THREE.Group();
-        group.position.set(x, height, z);
+        const pos = new THREE.Vector3(x, height, z);
 
         const scale = randomFloat(0.8, 1.4);
-        const mesh = new THREE.Mesh(ASSETS.geoRock, ASSETS.matRock);
-        mesh.scale.setScalar(scale);
-        mesh.position.y = 1.0; 
-        mesh.rotation.set(randomFloat(0,3), randomFloat(0,3), randomFloat(0,3));
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        mesh.updateMatrix();
-        
-        group.add(mesh);
-        group.updateMatrix();
 
-        return new Prop(group, 'rock', 1.0 * scale);
+        const dummy = new THREE.Object3D();
+        dummy.position.copy(pos);
+        dummy.position.y += 1.0;
+        dummy.rotation.set(randomFloat(0, 3), randomFloat(0, 3), randomFloat(0, 3));
+        dummy.scale.setScalar(scale);
+        dummy.updateMatrix();
+
+        return {
+            prop: new Prop('rock', pos, 1.0 * scale),
+            matrices: { rock: dummy.matrix.clone() }
+        };
     }
 
-    static createCrystal(x: number, z: number): Prop {
+    static generateCrystal(x: number, z: number) {
         const height = getTerrainHeight(x, z);
-        const group = new THREE.Group();
-        group.position.set(x, height, z);
+        const pos = new THREE.Vector3(x, height, z);
+        const matrices: THREE.Matrix4[] = [];
 
         const count = 3;
-        for(let i=0; i<count; i++) {
+        for (let i = 0; i < count; i++) {
             const h = randomFloat(1.0, 3.0);
-            const mesh = new THREE.Mesh(ASSETS.geoCrystal, ASSETS.matCrystal);
-            
-            mesh.scale.set(1, h, 1);
-            mesh.position.x = randomFloat(-0.5, 0.5);
-            mesh.position.z = randomFloat(-0.5, 0.5);
-            const angle = Math.atan2(mesh.position.z, mesh.position.x);
-            mesh.rotation.z = Math.PI / 8;
-            mesh.rotation.y = angle;
-            mesh.position.y = h/2;
-            mesh.updateMatrix();
-            
-            group.add(mesh);
+
+            const dummy = new THREE.Object3D();
+            dummy.position.set(
+                pos.x + randomFloat(-0.5, 0.5),
+                pos.y + h / 2,
+                pos.z + randomFloat(-0.5, 0.5)
+            );
+
+            const angle = Math.atan2(dummy.position.z - pos.z, dummy.position.x - pos.x);
+            dummy.rotation.z = Math.PI / 8;
+            dummy.rotation.y = angle;
+            dummy.scale.set(1, h, 1);
+            dummy.updateMatrix();
+            matrices.push(dummy.matrix.clone());
         }
-        
-        group.updateMatrix();
-        return new Prop(group, 'crystal', 1.2);
+
+        return {
+            prop: new Prop('crystal', pos, 1.2),
+            matrices: { crystal: matrices }
+        };
     }
 
-    static createGrass(x: number, z: number): Prop {
+    static generateGrass(x: number, z: number) {
         const height = getTerrainHeight(x, z);
-        const group = new THREE.Group();
-        group.position.set(x, height, z);
+        const pos = new THREE.Vector3(x, height, z);
+        const matrices: THREE.Matrix4[] = [];
 
-        // Create a small cluster of grass
         const count = 2 + Math.floor(Math.random() * 3);
-        for(let i=0; i<count; i++) {
+        for (let i = 0; i < count; i++) {
             const scale = 0.6 + Math.random() * 0.4;
-            const mesh = new THREE.Mesh(ASSETS.geoGrass, ASSETS.matGrass);
-            
-            mesh.scale.setScalar(scale);
-            mesh.position.x = randomFloat(-0.3, 0.3);
-            mesh.position.z = randomFloat(-0.3, 0.3);
-            mesh.rotation.y = randomFloat(0, Math.PI * 2);
-            mesh.position.y = scale * 0.75;
-            mesh.updateMatrix();
-            
-            group.add(mesh);
+
+            const dummy = new THREE.Object3D();
+            dummy.position.set(
+                pos.x + randomFloat(-0.3, 0.3),
+                pos.y + scale * 0.75,
+                pos.z + randomFloat(-0.3, 0.3)
+            );
+            dummy.rotation.y = randomFloat(0, Math.PI * 2);
+            dummy.scale.setScalar(scale);
+            dummy.updateMatrix();
+            matrices.push(dummy.matrix.clone());
         }
-        
-        group.updateMatrix();
-        return new Prop(group, 'grass', 0.3);
+
+        return {
+            prop: new Prop('grass', pos, 0.3),
+            matrices: { grass: matrices }
+        };
     }
 }
 
 // --- SNAKE ---
 export class Snake {
-  mesh: THREE.Group;
-  bodyMeshes: THREE.Mesh[] = [];
-  path: THREE.Vector3[] = []; // Changed to Vector3 for full 3D history
-  
-  // Position is now 3D but we still use Vector2 for some convenient 2D math
-  position: THREE.Vector3 = new THREE.Vector3(0, 0, 0); 
-  
-  angle: number = 0; 
-  turnFactor: number = 0; 
-  
-  // Physics
-  targetBaseSpeed: number = CONFIG.BASE_SNAKE_SPEED;
-  actualSpeed: number = CONFIG.BASE_SNAKE_SPEED;
-  verticalVelocity: number = 0; // True physics Y velocity
-  isAirborne: boolean = false;
-  
-  growPending: number = 0;
-  
-  isBoosting: boolean = false;
-  boostTimer: number = 0;
-  
-  invulnerableTimer: number = 0;
-  isStalled: boolean = false;
-  isUnderwater: boolean = false;
-  wasUnderwater: boolean = false;
+    mesh: THREE.Group;
+    bodyMeshes: THREE.Mesh[] = [];
+    path: THREE.Vector3[] = []; // Changed to Vector3 for full 3D history
 
-  onBoostStart?: () => void;
-  onCrash?: () => void;
-  onLand?: (impactSpeed: number) => void;
-  onEnterWater?: () => void;
-  onExitWater?: () => void;
-  
-  playerLight: THREE.PointLight;
+    // Position is now 3D but we still use Vector2 for some convenient 2D math
+    position: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
 
-  headGeo: THREE.OctahedronGeometry;
-  bodyGeo: THREE.IcosahedronGeometry;
-  headMat: THREE.MeshStandardMaterial;
-  bodyMat: THREE.MeshStandardMaterial;
+    angle: number = 0;
+    turnFactor: number = 0;
 
-  constructor(scene: THREE.Scene) {
-    this.mesh = new THREE.Group();
-    scene.add(this.mesh);
-    
-    // Init Shared Resources
-    const r = CONFIG.SEGMENT_RADIUS;
-    this.headGeo = new THREE.OctahedronGeometry(r * 1.2, 0);
-    this.bodyGeo = new THREE.IcosahedronGeometry(r, 0);
-    
-    this.headMat = new THREE.MeshStandardMaterial({ 
-        color: CONFIG.COLORS.SNAKE_HEAD,
-        emissive: CONFIG.COLORS.SNAKE_HEAD,
-        emissiveIntensity: 1.2,
-        roughness: 0.0,
-        flatShading: true
-    });
-    
-    this.bodyMat = new THREE.MeshStandardMaterial({ 
-        color: CONFIG.COLORS.SNAKE_BODY,
-        emissive: CONFIG.COLORS.SNAKE_BODY,
-        emissiveIntensity: 0.3,
-        roughness: 0.3,
-        flatShading: true
-    });
+    // Physics
+    targetBaseSpeed: number = CONFIG.BASE_SNAKE_SPEED;
+    actualSpeed: number = CONFIG.BASE_SNAKE_SPEED;
+    verticalVelocity: number = 0; // True physics Y velocity
+    isAirborne: boolean = false;
 
-    this.playerLight = new THREE.PointLight(CONFIG.COLORS.SNAKE_EMISSIVE, 2.0, 20);
-    this.playerLight.position.y = 2;
-    this.mesh.add(this.playerLight);
+    growPending: number = 0;
 
-    this.reset(CONFIG.BASE_SNAKE_SPEED);
-  }
+    isBoosting: boolean = false;
+    boostTimer: number = 0;
 
-  reset(speed: number) {
-    this.bodyMeshes.forEach(m => this.mesh.remove(m));
-    this.bodyMeshes = [];
-    this.path = [];
-    
-    // Safe start
-    let safe = false;
-    let r = 0;
-    while (!safe && r < 100) {
-        const tx = randomFloat(-100, 100);
-        const tz = randomFloat(-100, 100);
-        const h = getTerrainHeight(tx, tz);
-        
-        // Ensure not in water and not on a peak
-        if (h > CONFIG.WATER_LEVEL + 3 && h < CONFIG.TERRAIN_HEIGHT * 0.5) {
-            this.position.set(tx, h, tz);
-            safe = true;
-        }
-        r++;
+    invulnerableTimer: number = 0;
+    isStalled: boolean = false;
+    isUnderwater: boolean = false;
+    wasUnderwater: boolean = false;
+
+    onBoostStart?: () => void;
+    onCrash?: () => void;
+    onLand?: (impactSpeed: number) => void;
+    onEnterWater?: () => void;
+    onExitWater?: () => void;
+
+    playerLight: THREE.PointLight;
+
+    headGeo: THREE.OctahedronGeometry;
+    bodyGeo: THREE.IcosahedronGeometry;
+    headMat: THREE.MeshStandardMaterial;
+    bodyMat: THREE.MeshStandardMaterial;
+
+    constructor(scene: THREE.Scene) {
+        this.mesh = new THREE.Group();
+        scene.add(this.mesh);
+
+        // Init Shared Resources
+        const r = CONFIG.SEGMENT_RADIUS;
+        this.headGeo = new THREE.OctahedronGeometry(r * 1.2, 0);
+        this.bodyGeo = new THREE.IcosahedronGeometry(r, 0);
+
+        this.headMat = new THREE.MeshStandardMaterial({
+            color: CONFIG.COLORS.SNAKE_HEAD,
+            emissive: CONFIG.COLORS.SNAKE_HEAD,
+            emissiveIntensity: 1.2,
+            roughness: 0.0,
+            flatShading: true
+        });
+
+        this.bodyMat = new THREE.MeshStandardMaterial({
+            color: CONFIG.COLORS.SNAKE_BODY,
+            emissive: CONFIG.COLORS.SNAKE_BODY,
+            emissiveIntensity: 0.3,
+            roughness: 0.3,
+            flatShading: true
+        });
+
+        this.playerLight = new THREE.PointLight(CONFIG.COLORS.SNAKE_EMISSIVE, 2.0, 20);
+        this.playerLight.position.y = 2;
+        this.mesh.add(this.playerLight);
+
+        this.reset(CONFIG.BASE_SNAKE_SPEED);
     }
 
-    this.angle = 0; 
-    this.turnFactor = 0;
-    this.growPending = 0;
-    
-    this.targetBaseSpeed = speed;
-    this.actualSpeed = speed;
-    this.verticalVelocity = 0;
-    this.isAirborne = false;
+    reset(speed: number) {
+        this.bodyMeshes.forEach(m => this.mesh.remove(m));
+        this.bodyMeshes = [];
+        this.path = [];
 
-    this.isBoosting = false;
-    this.boostTimer = 0;
-    this.invulnerableTimer = 2.0; 
-    this.isStalled = false;
+        // Safe start
+        let safe = false;
+        let r = 0;
+        while (!safe && r < 100) {
+            const tx = randomFloat(-100, 100);
+            const tz = randomFloat(-100, 100);
+            const h = getTerrainHeight(tx, tz);
 
-    // Pre-fill path to avoid initial jitter
-    const startLen = CONFIG.SNAKE_START_LENGTH;
-    for (let i = 0; i <= startLen * 20; i++) {
-        // Trace backwards flat to avoid height glitches on spawn
-        const dist = i * (CONFIG.SEGMENT_SPACING / 10); 
-        this.path.push(new THREE.Vector3(
-            this.position.x - dist, 
-            this.position.y,
-            this.position.z 
-        ));
-    }
-
-    for (let i = 0; i < startLen; i++) {
-        this.addSegment(i === 0);
-    }
-    
-    this.updateBodyVisuals();
-  }
-
-  setBaseSpeed(speed: number) { this.targetBaseSpeed = speed; }
-  setTurn(turn: number) { this.turnFactor = turn; }
-
-  triggerBoost() {
-      if (this.isBoosting) {
-          this.boostTimer = CONFIG.BOOST_DURATION; 
-      } else {
-          this.isBoosting = true;
-          this.boostTimer = CONFIG.BOOST_DURATION;
-          if (this.onBoostStart) this.onBoostStart();
-      }
-  }
-
-  addSegment(isHead: boolean) {
-    const mesh = new THREE.Mesh(
-        isHead ? this.headGeo : this.bodyGeo,
-        isHead ? this.headMat : this.bodyMat
-    );
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    this.mesh.add(mesh);
-    this.bodyMeshes.push(mesh);
-  }
-
-  update(dt: number, nearbyObstacles: Obstacle[] = []): boolean {
-    if (this.invulnerableTimer > 0) this.invulnerableTimer -= dt;
-
-    // --- 1. HORIZONTAL VELOCITY ---
-    let engineSpeed = this.targetBaseSpeed;
-    if (this.isBoosting) {
-        this.boostTimer -= dt;
-        engineSpeed *= CONFIG.BOOST_SPEED_MULTIPLIER;
-        if (this.boostTimer <= 0) this.isBoosting = false;
-    }
-
-    // Look ahead logic for slope forces (only applies when on ground)
-    const lookAheadDist = 2.0;
-    const nextXSample = this.position.x + Math.cos(this.angle) * lookAheadDist;
-    const nextZSample = this.position.z + Math.sin(this.angle) * lookAheadDist;
-    
-    // We get the Terrain height directly here for physics check
-    const currentGroundH = getTerrainHeight(this.position.x, this.position.z);
-    const nextGroundH = getTerrainHeight(nextXSample, nextZSample);
-    
-    const slope = (nextGroundH - currentGroundH) / lookAheadDist;
-    
-    // Gravity influence on speed (Accellerate downhill, Decelerate uphill)
-    // Only apply if grounded or very close to ground
-    if (!this.isAirborne) {
-        const gravityForce = -slope * CONFIG.GRAVITY_ACCEL * CONFIG.SLOPE_SENSITIVITY;
-        this.actualSpeed += gravityForce * dt;
-        
-        // Friction
-        const speedDiff = engineSpeed - this.actualSpeed;
-        const frictionCoeff = this.actualSpeed > engineSpeed ? CONFIG.FRICTION * 0.5 : CONFIG.FRICTION * 2.0;
-        this.actualSpeed += speedDiff * frictionCoeff * dt;
-    } else {
-        // Air resistance
-        this.actualSpeed *= (1.0 - 0.1 * dt);
-    }
-
-    // Clamp Speed
-    if (this.actualSpeed > CONFIG.MAX_DOWNHILL_SPEED) this.actualSpeed = CONFIG.MAX_DOWNHILL_SPEED;
-    
-    // Stall Check
-    if (this.actualSpeed < CONFIG.MIN_STALL_SPEED && !this.isAirborne) {
-        this.isStalled = true;
-        if (this.actualSpeed < 0) this.actualSpeed = 0; 
-    } else {
-        this.isStalled = false;
-    }
-
-    // --- 2. STEERING ---
-    let turnRate = CONFIG.SNAKE_TURN_SPEED;
-    if (this.isAirborne) turnRate *= CONFIG.AIR_CONTROL; // Harder to turn in air
-    else if (this.isStalled) turnRate *= 0.2; 
-    
-    if (this.turnFactor !== 0) {
-        this.angle += this.turnFactor * turnRate * dt;
-    }
-
-    // --- 3. MOVEMENT INTEGRATION ---
-    const moveDist = this.actualSpeed * dt;
-    const nextX = this.position.x + Math.cos(this.angle) * moveDist;
-    const nextZ = this.position.z + Math.sin(this.angle) * moveDist; 
-    
-    // Vertical Integration (Physics Gravity)
-    this.verticalVelocity -= CONFIG.PHYSICS_GRAVITY * dt;
-    const predictedY = this.position.y + this.verticalVelocity * dt;
-    const predictedGroundH = getTerrainHeight(nextX, nextZ);
-
-    // --- 4. GROUND COLLISION & AIR LOGIC ---
-    const collisionThreshold = 0.5; // Tolerance
-
-    if (predictedY <= predictedGroundH + CONFIG.SEGMENT_RADIUS) {
-        // WE HIT THE GROUND / STAY ON GROUND
-        const prevAirborne = this.isAirborne;
-        const impactVel = this.verticalVelocity;
-
-        this.isAirborne = false;
-        this.position.y = predictedGroundH + CONFIG.SEGMENT_RADIUS;
-        
-        if (prevAirborne) {
-            // Landing Event
-            if (this.onLand && impactVel < -10) this.onLand(Math.abs(impactVel));
-        }
-
-        // Calculate slope velocity to see if we should launch next frame
-        // "slopeVel" is how fast the ground is rising/falling underneath us
-        // v = dist/time -> (heightDiff) / dt is wrong because we moved X distance.
-        // It's slope * horizontalSpeed.
-        // slope = dy/dx. speed = dx/dt.  slope * speed = dy/dt.
-        const currentSlope = (predictedGroundH - currentGroundH) / moveDist; 
-        const terrainVerticalVel = currentSlope * this.actualSpeed;
-
-        if (terrainVerticalVel > this.verticalVelocity) {
-            // The ground is pushing us up (or we are falling slower than the slope drops? no)
-            // If the ground rises faster than our current V-vel, we climb.
-            // If the ground drops (negative), and we have downward V-vel, we stick unless the drop is steep.
-            
-            // STICK TO GROUND
-            this.verticalVelocity = terrainVerticalVel;
-            
-            // --- JUMP LOGIC ---
-            // If we are moving fast up a slope, add a tiny bit of "pop" so if the slope ends, we fly.
-            if (terrainVerticalVel > 5 && this.actualSpeed > 20) {
-                 this.verticalVelocity += CONFIG.JUMP_ASSIST * dt; 
+            // Ensure not in water and not on a peak
+            if (h > CONFIG.WATER_LEVEL + 3 && h < CONFIG.TERRAIN_HEIGHT * 0.5) {
+                this.position.set(tx, h, tz);
+                safe = true;
             }
-        } 
-        // Else: If terrainVerticalVel is WAY less than verticalVelocity (cliff drops away), 
-        // and we were already moving up? Wait.
-        // If we have momentum (yVel > 0) and ground drops, we naturally enter 'if predictedY > predictedGroundH' block next frame?
-        // No, we are in 'Hit Ground' block. 
-        // This implies we *fell* into the ground or stayed on it.
-        
-    } else {
-        // WE ARE AIRBORNE
-        this.isAirborne = true;
-        this.position.y = predictedY;
-    }
-    
-    // --- 5. OBSTACLE COLLISION ---
-    // Only crash on very steep slopes, and give some tolerance
-    if (slope > CONFIG.MAX_CLIMBABLE_SLOPE * 1.2 && this.invulnerableTimer <= 0 && !this.isAirborne && this.actualSpeed > 5) {
-        // Only crash on walls if on ground and moving fast enough
-        if (this.onCrash) this.onCrash();
-        return false;
+            r++;
+        }
+
+        this.angle = 0;
+        this.turnFactor = 0;
+        this.growPending = 0;
+
+        this.targetBaseSpeed = speed;
+        this.actualSpeed = speed;
+        this.verticalVelocity = 0;
+        this.isAirborne = false;
+
+        this.isBoosting = false;
+        this.boostTimer = 0;
+        this.invulnerableTimer = 2.0;
+        this.isStalled = false;
+
+        // Pre-fill path to avoid initial jitter
+        const startLen = CONFIG.SNAKE_START_LENGTH;
+        for (let i = 0; i <= startLen * 20; i++) {
+            // Trace backwards flat to avoid height glitches on spawn
+            const dist = i * (CONFIG.SEGMENT_SPACING / 10);
+            this.path.push(new THREE.Vector3(
+                this.position.x - dist,
+                this.position.y,
+                this.position.z
+            ));
+        }
+
+        for (let i = 0; i < startLen; i++) {
+            this.addSegment(i === 0);
+        }
+
+        this.updateBodyVisuals();
     }
 
-    if (this.invulnerableTimer <= 0) {
-        // Check props
-        const headRadius = CONFIG.SEGMENT_RADIUS * 1.5;
-        // Optimization check
-        for (const obs of nearbyObstacles) {
-             const dx = nextX - obs.position.x;
-             const dz = nextZ - obs.position.z;
-             if (Math.abs(dx) > 10 || Math.abs(dz) > 10) continue;
-             
-             // Check 2D distance first
-             const distSq = dx*dx + dz*dz;
-             const minDist = headRadius + obs.radius;
-             if (distSq < minDist * minDist) {
-                 // Check height - allow jumping over obstacles if snake is high enough
-                 // Use radius to estimate obstacle height (trees have larger radius)
-                 const obstacleHeight = obs.radius > 3 ? obs.radius * 2 : obs.radius; // Trees have larger radius
-                 const clearance = obs.radius > 3 ? 8.0 : 2.0; // More clearance for larger obstacles (trees)
-                 if (this.position.y < obs.position.y + obstacleHeight + clearance) {
-                    if (this.onCrash) this.onCrash();
-                    return false;
-                 }
-             }
+    setBaseSpeed(speed: number) { this.targetBaseSpeed = speed; }
+    setTurn(turn: number) { this.turnFactor = turn; }
+
+    triggerBoost() {
+        if (this.isBoosting) {
+            this.boostTimer = CONFIG.BOOST_DURATION;
+        } else {
+            this.isBoosting = true;
+            this.boostTimer = CONFIG.BOOST_DURATION;
+            if (this.onBoostStart) this.onBoostStart();
         }
     }
 
-    // Apply Position
-    this.position.x = nextX;
-    this.position.z = nextZ;
-    // Y already applied
-
-    // Check if underwater
-    this.wasUnderwater = this.isUnderwater;
-    this.isUnderwater = this.position.y < CONFIG.WATER_LEVEL + 1.0;
-    
-    // Trigger water entry/exit events
-    if (this.isUnderwater && !this.wasUnderwater && this.onEnterWater) {
-        this.onEnterWater();
-    }
-    if (!this.isUnderwater && this.wasUnderwater && this.onExitWater) {
-        this.onExitWater();
+    addSegment(isHead: boolean) {
+        const mesh = new THREE.Mesh(
+            isHead ? this.headGeo : this.bodyGeo,
+            isHead ? this.headMat : this.bodyMat
+        );
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        this.mesh.add(mesh);
+        this.bodyMeshes.push(mesh);
     }
 
-    // Record Path (3D)
-    this.path.unshift(this.position.clone()); // Store full 3D vector
-    
-    const approximateSegLimit = 50 + (this.bodyMeshes.length * 20); 
-    if (this.path.length > approximateSegLimit) {
-        this.path.length = approximateSegLimit; 
-    }
+    update(dt: number, nearbyObstacles: Obstacle[] = []): boolean {
+        if (this.invulnerableTimer > 0) this.invulnerableTimer -= dt;
 
-    this.updateBodyVisuals();
+        // --- 1. HORIZONTAL VELOCITY ---
+        let engineSpeed = this.targetBaseSpeed;
+        if (this.isBoosting) {
+            this.boostTimer -= dt;
+            engineSpeed *= CONFIG.BOOST_SPEED_MULTIPLIER;
+            if (this.boostTimer <= 0) this.isBoosting = false;
+        }
 
-    if (this.growPending > 0) {
-        this.addSegment(false);
-        this.growPending--;
-    }
+        // Look ahead logic for slope forces (only applies when on ground)
+        const lookAheadDist = 2.0;
+        const nextXSample = this.position.x + Math.cos(this.angle) * lookAheadDist;
+        const nextZSample = this.position.z + Math.sin(this.angle) * lookAheadDist;
 
-    // 6. SELF COLLISION - Optimized with early exit
-    if (this.invulnerableTimer <= 0 && this.bodyMeshes.length > 25) {
-        const grace = 25; // Increased grace period
-        const hitDist = CONFIG.SEGMENT_RADIUS * 1.8; // Slightly more lenient
-        // Only check every 3rd segment for performance
-        for (let i = grace; i < this.bodyMeshes.length; i += 3) {
-            const segWorldPos = this.bodyMeshes[i].position;
-            const dx = Math.abs(this.position.x - segWorldPos.x);
-            const dz = Math.abs(this.position.z - segWorldPos.z);
-            
-            // Early exit optimization
-            if (dx > 3 || dz > 3) continue;
+        // We get the Terrain height directly here for physics check
+        const currentGroundH = getTerrainHeight(this.position.x, this.position.z);
+        const nextGroundH = getTerrainHeight(nextXSample, nextZSample);
 
-            const distSq = dx*dx + dz*dz;
-            if (distSq < hitDist * hitDist) {
-                // More lenient height check - allow jumping over tail
-                if (Math.abs(this.position.y - segWorldPos.y) < 3.0) {
-                    if (this.onCrash) this.onCrash();
-                    return false;
+        const slope = (nextGroundH - currentGroundH) / lookAheadDist;
+
+        // Gravity influence on speed (Accellerate downhill, Decelerate uphill)
+        // Only apply if grounded or very close to ground
+        if (!this.isAirborne) {
+            const gravityForce = -slope * CONFIG.GRAVITY_ACCEL * CONFIG.SLOPE_SENSITIVITY;
+            this.actualSpeed += gravityForce * dt;
+
+            // Friction
+            const speedDiff = engineSpeed - this.actualSpeed;
+            const frictionCoeff = this.actualSpeed > engineSpeed ? CONFIG.FRICTION * 0.5 : CONFIG.FRICTION * 2.0;
+            this.actualSpeed += speedDiff * frictionCoeff * dt;
+        } else {
+            // Air resistance
+            this.actualSpeed *= (1.0 - 0.1 * dt);
+        }
+
+        // Clamp Speed
+        if (this.actualSpeed > CONFIG.MAX_DOWNHILL_SPEED) this.actualSpeed = CONFIG.MAX_DOWNHILL_SPEED;
+
+        // Stall Check
+        if (this.actualSpeed < CONFIG.MIN_STALL_SPEED && !this.isAirborne) {
+            this.isStalled = true;
+            if (this.actualSpeed < 0) this.actualSpeed = 0;
+        } else {
+            this.isStalled = false;
+        }
+
+        // --- 2. STEERING ---
+        let turnRate = CONFIG.SNAKE_TURN_SPEED;
+        if (this.isAirborne) turnRate *= CONFIG.AIR_CONTROL; // Harder to turn in air
+        else if (this.isStalled) turnRate *= 0.2;
+
+        if (this.turnFactor !== 0) {
+            this.angle += this.turnFactor * turnRate * dt;
+        }
+
+        // --- 3. MOVEMENT INTEGRATION ---
+        const moveDist = this.actualSpeed * dt;
+        const nextX = this.position.x + Math.cos(this.angle) * moveDist;
+        const nextZ = this.position.z + Math.sin(this.angle) * moveDist;
+
+        // Vertical Integration (Physics Gravity)
+        this.verticalVelocity -= CONFIG.PHYSICS_GRAVITY * dt;
+        const predictedY = this.position.y + this.verticalVelocity * dt;
+        const predictedGroundH = getTerrainHeight(nextX, nextZ);
+
+        // --- 4. GROUND COLLISION & AIR LOGIC ---
+        const collisionThreshold = 0.5; // Tolerance
+
+        if (predictedY <= predictedGroundH + CONFIG.SEGMENT_RADIUS) {
+            // WE HIT THE GROUND / STAY ON GROUND
+            const prevAirborne = this.isAirborne;
+            const impactVel = this.verticalVelocity;
+
+            this.isAirborne = false;
+            this.position.y = predictedGroundH + CONFIG.SEGMENT_RADIUS;
+
+            if (prevAirborne) {
+                // Landing Event
+                if (this.onLand && impactVel < -10) this.onLand(Math.abs(impactVel));
+            }
+
+            // Calculate slope velocity to see if we should launch next frame
+            // "slopeVel" is how fast the ground is rising/falling underneath us
+            // v = dist/time -> (heightDiff) / dt is wrong because we moved X distance.
+            // It's slope * horizontalSpeed.
+            // slope = dy/dx. speed = dx/dt.  slope * speed = dy/dt.
+            const currentSlope = (predictedGroundH - currentGroundH) / moveDist;
+            const terrainVerticalVel = currentSlope * this.actualSpeed;
+
+            if (terrainVerticalVel > this.verticalVelocity) {
+                // The ground is pushing us up (or we are falling slower than the slope drops? no)
+                // If the ground rises faster than our current V-vel, we climb.
+                // If the ground drops (negative), and we have downward V-vel, we stick unless the drop is steep.
+
+                // STICK TO GROUND
+                this.verticalVelocity = terrainVerticalVel;
+
+                // --- JUMP LOGIC ---
+                // If we are moving fast up a slope, add a tiny bit of "pop" so if the slope ends, we fly.
+                if (terrainVerticalVel > 5 && this.actualSpeed > 20) {
+                    this.verticalVelocity += CONFIG.JUMP_ASSIST * dt;
+                }
+            }
+            // Else: If terrainVerticalVel is WAY less than verticalVelocity (cliff drops away), 
+            // and we were already moving up? Wait.
+            // If we have momentum (yVel > 0) and ground drops, we naturally enter 'if predictedY > predictedGroundH' block next frame?
+            // No, we are in 'Hit Ground' block. 
+            // This implies we *fell* into the ground or stayed on it.
+
+        } else {
+            // WE ARE AIRBORNE
+            this.isAirborne = true;
+            this.position.y = predictedY;
+        }
+
+        // --- 5. OBSTACLE COLLISION ---
+        // Only crash on very steep slopes, and give some tolerance
+        if (slope > CONFIG.MAX_CLIMBABLE_SLOPE * 1.2 && this.invulnerableTimer <= 0 && !this.isAirborne && this.actualSpeed > 5) {
+            // Only crash on walls if on ground and moving fast enough
+            if (this.onCrash) this.onCrash();
+            return false;
+        }
+
+        if (this.invulnerableTimer <= 0) {
+            // Check props
+            const headRadius = CONFIG.SEGMENT_RADIUS * 1.5;
+            // Optimization check
+            for (const obs of nearbyObstacles) {
+                const dx = nextX - obs.position.x;
+                const dz = nextZ - obs.position.z;
+                if (Math.abs(dx) > 10 || Math.abs(dz) > 10) continue;
+
+                // Check 2D distance first
+                const distSq = dx * dx + dz * dz;
+                const minDist = headRadius + obs.radius;
+                if (distSq < minDist * minDist) {
+                    // Check height - allow jumping over obstacles if snake is high enough
+                    // Use radius to estimate obstacle height (trees have larger radius)
+                    const obstacleHeight = obs.radius > 3 ? obs.radius * 2 : obs.radius; // Trees have larger radius
+                    const clearance = obs.radius > 3 ? 8.0 : 2.0; // More clearance for larger obstacles (trees)
+                    if (this.position.y < obs.position.y + obstacleHeight + clearance) {
+                        if (this.onCrash) this.onCrash();
+                        return false;
+                    }
                 }
             }
         }
+
+        // Apply Position
+        this.position.x = nextX;
+        this.position.z = nextZ;
+        // Y already applied
+
+        // Check if underwater
+        this.wasUnderwater = this.isUnderwater;
+        this.isUnderwater = this.position.y < CONFIG.WATER_LEVEL + 1.0;
+
+        // Trigger water entry/exit events
+        if (this.isUnderwater && !this.wasUnderwater && this.onEnterWater) {
+            this.onEnterWater();
+        }
+        if (!this.isUnderwater && this.wasUnderwater && this.onExitWater) {
+            this.onExitWater();
+        }
+
+        // Record Path (3D)
+        this.path.unshift(this.position.clone()); // Store full 3D vector
+
+        const approximateSegLimit = 50 + (this.bodyMeshes.length * 20);
+        if (this.path.length > approximateSegLimit) {
+            this.path.length = approximateSegLimit;
+        }
+
+        this.updateBodyVisuals();
+
+        if (this.growPending > 0) {
+            this.addSegment(false);
+            this.growPending--;
+        }
+
+        // 6. SELF COLLISION - Optimized with early exit
+        if (this.invulnerableTimer <= 0 && this.bodyMeshes.length > 25) {
+            const grace = 25; // Increased grace period
+            const hitDist = CONFIG.SEGMENT_RADIUS * 1.8; // Slightly more lenient
+            // Only check every 3rd segment for performance
+            for (let i = grace; i < this.bodyMeshes.length; i += 3) {
+                const segWorldPos = this.bodyMeshes[i].position;
+                const dx = Math.abs(this.position.x - segWorldPos.x);
+                const dz = Math.abs(this.position.z - segWorldPos.z);
+
+                // Early exit optimization
+                if (dx > 3 || dz > 3) continue;
+
+                const distSq = dx * dx + dz * dz;
+                if (distSq < hitDist * hitDist) {
+                    // More lenient height check - allow jumping over tail
+                    if (Math.abs(this.position.y - segWorldPos.y) < 3.0) {
+                        if (this.onCrash) this.onCrash();
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
     }
 
-    return true;
-  }
+    updateBodyVisuals() {
+        let currentPathIndex = 0;
+        let distAccumulator = 0;
 
-  updateBodyVisuals() {
-      let currentPathIndex = 0;
-      let distAccumulator = 0;
-      
-      const head = this.bodyMeshes[0];
-      // Head connects directly to physical position
-      head.position.copy(this.position);
-      
-      const time = Date.now() * 0.002;
+        const head = this.bodyMeshes[0];
+        // Head connects directly to physical position
+        head.position.copy(this.position);
 
-      // Tilt head based on movement
-      // Pitch: look down if falling, look up if climbing
-      // We can approximate pitch from vertical velocity
-      const pitch = Math.max(-0.8, Math.min(0.8, this.verticalVelocity * 0.05));
-      
-      head.rotation.set(0, 0, 0);
-      head.rotation.y = -this.angle; // Yaw
-      head.rotation.z = this.isStalled ? 0.5 : (this.turnFactor * -0.2); // Bank in turns
-      head.rotateX(pitch);
-      
-      this.playerLight.position.copy(this.position);
-      this.playerLight.position.y += 3;
-      
-      if (this.isStalled) {
-          const warnPulse = (Math.sin(time * 10) + 1) * 0.5; 
-          this.headMat.emissiveIntensity = 1.2 + warnPulse * 1.0;
-          this.headMat.color.setHex(CONFIG.COLORS.APPLE); 
-      } else {
-          this.headMat.emissiveIntensity = 1.2;
-          this.headMat.color.setHex(CONFIG.COLORS.SNAKE_HEAD);
-      }
+        const time = Date.now() * 0.002;
 
-      // Update Body Segments
-      for (let i = 1; i < this.bodyMeshes.length; i++) {
-          const mesh = this.bodyMeshes[i];
-          const targetDist = i * CONFIG.SEGMENT_SPACING;
-          
-          while (currentPathIndex < this.path.length - 1) {
-              const p1 = this.path[currentPathIndex];
-              const p2 = this.path[currentPathIndex + 1];
-              // 3D Distance for air handling
-              const d = p1.distanceTo(p2);
-              
-              if (distAccumulator + d >= targetDist) {
-                  const alpha = (targetDist - distAccumulator) / d;
-                  
-                  // Interpolate 3D position
-                  mesh.position.lerpVectors(p1, p2, alpha);
-                  
-                  // Gentle generic wobble
-                  if (!this.isAirborne) {
-                     const wave = Math.sin(time - i * 0.5) * 0.2;
-                     mesh.position.y += wave;
-                  }
-                  
-                  mesh.rotation.x = time * 0.5;
-                  mesh.rotation.y = time * 0.3;
-                  mesh.updateMatrix();
-                  
-                  break;
-              }
-              distAccumulator += d;
-              currentPathIndex++;
-          }
-      }
-  }
+        // Tilt head based on movement
+        // Pitch: look down if falling, look up if climbing
+        // We can approximate pitch from vertical velocity
+        const pitch = Math.max(-0.8, Math.min(0.8, this.verticalVelocity * 0.05));
+
+        head.rotation.set(0, 0, 0);
+        head.rotation.y = -this.angle; // Yaw
+        head.rotation.z = this.isStalled ? 0.5 : (this.turnFactor * -0.2); // Bank in turns
+        head.rotateX(pitch);
+
+        this.playerLight.position.copy(this.position);
+        this.playerLight.position.y += 3;
+
+        if (this.isStalled) {
+            const warnPulse = (Math.sin(time * 10) + 1) * 0.5;
+            this.headMat.emissiveIntensity = 1.2 + warnPulse * 1.0;
+            this.headMat.color.setHex(CONFIG.COLORS.APPLE);
+        } else {
+            this.headMat.emissiveIntensity = 1.2;
+            this.headMat.color.setHex(CONFIG.COLORS.SNAKE_HEAD);
+        }
+
+        // Update Body Segments
+        for (let i = 1; i < this.bodyMeshes.length; i++) {
+            const mesh = this.bodyMeshes[i];
+            const targetDist = i * CONFIG.SEGMENT_SPACING;
+
+            while (currentPathIndex < this.path.length - 1) {
+                const p1 = this.path[currentPathIndex];
+                const p2 = this.path[currentPathIndex + 1];
+                // 3D Distance for air handling
+                const d = p1.distanceTo(p2);
+
+                if (distAccumulator + d >= targetDist) {
+                    const alpha = (targetDist - distAccumulator) / d;
+
+                    // Interpolate 3D position
+                    mesh.position.lerpVectors(p1, p2, alpha);
+
+                    // Gentle generic wobble
+                    if (!this.isAirborne) {
+                        const wave = Math.sin(time - i * 0.5) * 0.2;
+                        mesh.position.y += wave;
+                    }
+
+                    mesh.rotation.x = time * 0.5;
+                    mesh.rotation.y = time * 0.3;
+                    mesh.updateMatrix();
+
+                    break;
+                }
+                distAccumulator += d;
+                currentPathIndex++;
+            }
+        }
+    }
 }
 
 // --- APPLE MANAGER ---
@@ -633,129 +635,130 @@ interface Apple {
 }
 
 export class AppleManager {
-  scene: THREE.Scene;
-  snake: Snake;
-  activeApples: Apple[] = [];
-  
-  onEat?: (position: THREE.Vector3) => void;
-  
-  constructor(scene: THREE.Scene, snake: Snake) {
-      this.scene = scene;
-      this.snake = snake;
-  }
-  
-  spawnApple(treeProp: Prop) {
-      if (treeProp.type !== 'tree') return;
-      
-      const mesh = new THREE.Mesh(ASSETS.geoApple, ASSETS.matApple);
-      
-      const treePos = treeProp.mesh.position;
-      const angle = Math.random() * Math.PI * 2;
-      
-      const dist = randomFloat(4.0, 10.0); 
-      
-      const x = treePos.x + Math.cos(angle) * dist;
-      const z = treePos.z + Math.sin(angle) * dist;
-      const groundH = getTerrainHeight(x, z);
-      const spawnH = groundH + randomFloat(15.0, 25.0);
-      
-      mesh.position.set(x, spawnH, z);
+    scene: THREE.Scene;
+    snake: Snake;
+    activeApples: Apple[] = [];
 
-      this.scene.add(mesh);
-      
-      this.activeApples.push({ 
-          mesh, 
-          velocity: new THREE.Vector3(0, 0, 0),
-          isFalling: true,
-          landed: false,
-          time: Math.random() * 100
-      });
-  }
-  
-  update(dt: number): boolean {
-      let ate = false;
-      const eatDist = 2.5; // Slightly larger eat radius for air grabs
-      const headPos = this.snake.bodyMeshes[0].position;
-      const cullDistSq = CONFIG.APPLE_CULL_DIST * CONFIG.APPLE_CULL_DIST;
-      const lightDistSq = 50 * 50; // Only add lights to apples within 50 units
-      
-      for (let i = this.activeApples.length - 1; i >= 0; i--) {
-          const apple = this.activeApples[i];
-          const distSqToHead = headPos.distanceToSquared(apple.mesh.position);
+    onEat?: (position: THREE.Vector3) => void;
 
-          if (distSqToHead > cullDistSq) {
-              if (apple.light) {
-                  apple.mesh.remove(apple.light);
-              }
-              this.scene.remove(apple.mesh);
-              this.activeApples.splice(i, 1);
-              continue; 
-          }
+    constructor(scene: THREE.Scene, snake: Snake) {
+        this.scene = scene;
+        this.snake = snake;
+    }
 
-          // Only add lights to nearby apples for performance
-          if (distSqToHead < lightDistSq && !apple.light) {
-              const appleLight = new THREE.PointLight(0xFF4081, 1.2, 8);
-              appleLight.position.set(0, 0, 0);
-              apple.mesh.add(appleLight);
-              apple.light = appleLight;
-          } else if (distSqToHead >= lightDistSq && apple.light) {
-              apple.mesh.remove(apple.light);
-              apple.light = undefined;
-          }
+    spawnApple(treeProp: Prop) {
+        if (treeProp.type !== 'tree') return;
 
-          if (apple.isFalling) {
-              apple.velocity.y -= 25.0 * dt; 
-              apple.mesh.position.addScaledVector(apple.velocity, dt);
-              const groundH = getTerrainHeight(apple.mesh.position.x, apple.mesh.position.z);
-              
-              if (apple.mesh.position.y <= groundH + 0.5) {
-                  apple.mesh.position.y = groundH + 0.5;
-                  if (Math.abs(apple.velocity.y) > 2.0) {
-                       apple.velocity.y *= -0.4;
-                       apple.velocity.x *= 0.8;
-                       apple.velocity.z *= 0.8;
-                  } else {
-                      apple.isFalling = false;
-                      apple.landed = true;
-                      apple.velocity.set(0,0,0);
-                      apple.baseY = groundH; 
-                  }
-              }
-          } else {
-              apple.time += dt * 2;
-              const groundH = apple.baseY ?? getTerrainHeight(apple.mesh.position.x, apple.mesh.position.z);
-              apple.mesh.position.y = groundH + 0.5 + Math.sin(apple.time) * 0.2;
-              apple.mesh.rotation.y += dt;
-              apple.mesh.rotation.z += dt * 0.5;
-          }
+        const mesh = new THREE.Mesh(ASSETS.geoApple, ASSETS.matApple);
 
-          const distSq = headPos.distanceToSquared(apple.mesh.position);
-          
-          if (distSq < eatDist * eatDist) {
-              const pos = apple.mesh.position.clone();
-              if (apple.light) {
-                  apple.mesh.remove(apple.light);
-              }
-              this.scene.remove(apple.mesh);
-              this.activeApples.splice(i, 1);
-              
-              if (this.onEat) this.onEat(pos);
-              
-              this.snake.growPending++;
-              ate = true;
-          }
-      }
-      
-      return ate;
-  }
-  
-  reset() {
-      for(const a of this.activeApples) {
-          if (a.light) {
-              a.mesh.remove(a.light);
-          }
-          this.scene.remove(a.mesh);
-      }
-      this.activeApples = [];
-  }
+        // FIX: Access position directly from Prop, no mesh access
+        const treePos = treeProp.position;
+        const angle = Math.random() * Math.PI * 2;
+
+        const dist = randomFloat(4.0, 10.0);
+
+        const x = treePos.x + Math.cos(angle) * dist;
+        const z = treePos.z + Math.sin(angle) * dist;
+        const groundH = getTerrainHeight(x, z);
+        const spawnH = groundH + randomFloat(15.0, 25.0);
+
+        mesh.position.set(x, spawnH, z);
+
+        this.scene.add(mesh);
+
+        this.activeApples.push({
+            mesh,
+            velocity: new THREE.Vector3(0, 0, 0),
+            isFalling: true,
+            landed: false,
+            time: Math.random() * 100
+        });
+    }
+
+    update(dt: number): boolean {
+        let ate = false;
+        const eatDist = 2.5; // Slightly larger eat radius for air grabs
+        const headPos = this.snake.bodyMeshes[0].position;
+        const cullDistSq = CONFIG.APPLE_CULL_DIST * CONFIG.APPLE_CULL_DIST;
+        const lightDistSq = 50 * 50; // Only add lights to apples within 50 units
+
+        for (let i = this.activeApples.length - 1; i >= 0; i--) {
+            const apple = this.activeApples[i];
+            const distSqToHead = headPos.distanceToSquared(apple.mesh.position);
+
+            if (distSqToHead > cullDistSq) {
+                if (apple.light) {
+                    apple.mesh.remove(apple.light);
+                }
+                this.scene.remove(apple.mesh);
+                this.activeApples.splice(i, 1);
+                continue;
+            }
+
+            // Only add lights to nearby apples for performance
+            if (distSqToHead < lightDistSq && !apple.light) {
+                const appleLight = new THREE.PointLight(0xFF4081, 1.2, 8);
+                appleLight.position.set(0, 0, 0);
+                apple.mesh.add(appleLight);
+                apple.light = appleLight;
+            } else if (distSqToHead >= lightDistSq && apple.light) {
+                apple.mesh.remove(apple.light);
+                apple.light = undefined;
+            }
+
+            if (apple.isFalling) {
+                apple.velocity.y -= 25.0 * dt;
+                apple.mesh.position.addScaledVector(apple.velocity, dt);
+                const groundH = getTerrainHeight(apple.mesh.position.x, apple.mesh.position.z);
+
+                if (apple.mesh.position.y <= groundH + 0.5) {
+                    apple.mesh.position.y = groundH + 0.5;
+                    if (Math.abs(apple.velocity.y) > 2.0) {
+                        apple.velocity.y *= -0.4;
+                        apple.velocity.x *= 0.8;
+                        apple.velocity.z *= 0.8;
+                    } else {
+                        apple.isFalling = false;
+                        apple.landed = true;
+                        apple.velocity.set(0, 0, 0);
+                        apple.baseY = groundH;
+                    }
+                }
+            } else {
+                apple.time += dt * 2;
+                const groundH = apple.baseY ?? getTerrainHeight(apple.mesh.position.x, apple.mesh.position.z);
+                apple.mesh.position.y = groundH + 0.5 + Math.sin(apple.time) * 0.2;
+                apple.mesh.rotation.y += dt;
+                apple.mesh.rotation.z += dt * 0.5;
+            }
+
+            const distSq = headPos.distanceToSquared(apple.mesh.position);
+
+            if (distSq < eatDist * eatDist) {
+                const pos = apple.mesh.position.clone();
+                if (apple.light) {
+                    apple.mesh.remove(apple.light);
+                }
+                this.scene.remove(apple.mesh);
+                this.activeApples.splice(i, 1);
+
+                if (this.onEat) this.onEat(pos);
+
+                this.snake.growPending++;
+                ate = true;
+            }
+        }
+
+        return ate;
+    }
+
+    reset() {
+        for (const a of this.activeApples) {
+            if (a.light) {
+                a.mesh.remove(a.light);
+            }
+            this.scene.remove(a.mesh);
+        }
+        this.activeApples = [];
+    }
 }
