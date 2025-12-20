@@ -1,0 +1,3 @@
+# Why?
+
+Snake, but infinite!
