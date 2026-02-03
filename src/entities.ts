@@ -757,8 +757,12 @@ export class Snake {
             this.onExitWater();
         }
 
-        // Record Path (3D)
-        this.path.unshift(this.position.clone()); // Store full 3D vector
+        // Record Path (3D) - Use fixed distance intervals for smooth movement
+        const PATH_POINT_SPACING = 0.2; // Fixed spacing regardless of frame rate
+        if (this.path.length === 0 ||
+            this.position.distanceTo(this.path[0]) >= PATH_POINT_SPACING) {
+            this.path.unshift(this.position.clone()); // Store full 3D vector
+        }
 
         const approximateSegLimit = 50 + (this.bodyMeshes.length * 20);
         if (this.path.length > approximateSegLimit) {
@@ -828,9 +832,23 @@ export class Snake {
         }
 
         // Update Body Segments
+        // Start interpolation from current head position (not path[0]) to avoid jitter
+        // when new path points are recorded
         for (let i = 1; i < this.bodyMeshes.length; i++) {
             const mesh = this.bodyMeshes[i];
             const targetDist = i * CONFIG.SEGMENT_SPACING;
+
+            // First segment: from current head position to path[0]
+            if (currentPathIndex === 0 && this.path.length > 0) {
+                const headToFirstPath = this.position.distanceTo(this.path[0]);
+                if (distAccumulator + headToFirstPath >= targetDist) {
+                    const alpha = (targetDist - distAccumulator) / headToFirstPath;
+                    mesh.position.lerpVectors(this.position, this.path[0], alpha);
+                    mesh.updateMatrix();
+                    continue;
+                }
+                distAccumulator += headToFirstPath;
+            }
 
             while (currentPathIndex < this.path.length - 1) {
                 const p1 = this.path[currentPathIndex];
@@ -841,15 +859,6 @@ export class Snake {
                     const alpha = (targetDist - distAccumulator) / d;
 
                     mesh.position.lerpVectors(p1, p2, alpha);
-
-                    // Gentle generic wobble
-                    if (!this.isAirborne) {
-                        const wave = Math.sin(time - i * 0.5) * 0.2;
-                        mesh.position.y += wave;
-                    }
-
-                    mesh.rotation.x = time * 0.5;
-                    mesh.rotation.y = time * 0.3;
                     mesh.updateMatrix();
 
                     break;
@@ -869,7 +878,6 @@ interface Apple {
     landed: boolean;
     time: number;
     baseY?: number;
-    light?: THREE.PointLight;
 }
 
 export class AppleManager {
@@ -918,35 +926,18 @@ export class AppleManager {
         const eatDist = 2.5; // Slightly larger eat radius for air grabs
         const headPos = this.snake.bodyMeshes[0].position;
         const cullDistSq = CONFIG.APPLE_CULL_DIST * CONFIG.APPLE_CULL_DIST;
-        const lightDistSq = 50 * 50; // Only add lights to apples within 50 units
 
         for (let i = this.activeApples.length - 1; i >= 0; i--) {
             const apple = this.activeApples[i];
             const distSqToHead = headPos.distanceToSquared(apple.mesh.position);
 
             if (distSqToHead > cullDistSq) {
-                if (apple.light) {
-                    apple.mesh.remove(apple.light);
-                }
                 this.scene.remove(apple.mesh);
                 this.activeApples.splice(i, 1);
                 continue;
             }
 
-            // Only add lights to nearby apples for performance
-            if (distSqToHead < lightDistSq) {
-                if (!apple.light) {
-                    const appleLight = new THREE.PointLight(ASSETS.matApple.emissive, 1.2, 8);
-                    appleLight.position.set(0, 0, 0);
-                    apple.mesh.add(appleLight);
-                    apple.light = appleLight;
-                }
-                // Ensure light matches current palette (which updates ASSETS)
-                apple.light.color.copy(ASSETS.matApple.emissive);
-            } else if (distSqToHead >= lightDistSq && apple.light) {
-                apple.mesh.remove(apple.light);
-                apple.light = undefined;
-            }
+            // Apple lights removed for performance - emissive material with bloom provides sufficient glow
 
             if (apple.isFalling) {
                 apple.velocity.y -= 25.0 * dt;
@@ -978,9 +969,6 @@ export class AppleManager {
 
             if (distSq < eatDist * eatDist) {
                 const pos = apple.mesh.position.clone();
-                if (apple.light) {
-                    apple.mesh.remove(apple.light);
-                }
                 this.scene.remove(apple.mesh);
                 this.activeApples.splice(i, 1);
 
@@ -996,9 +984,6 @@ export class AppleManager {
 
     reset() {
         for (const a of this.activeApples) {
-            if (a.light) {
-                a.mesh.remove(a.light);
-            }
             this.scene.remove(a.mesh);
         }
         this.activeApples = [];

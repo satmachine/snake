@@ -5,7 +5,7 @@ import { Snake, AppleManager, updateAssetMaterials } from './entities';
 import { World } from './world';
 import { UI } from './ui';
 import { AudioManager } from './audio';
-import { getTerrainHeight } from './utils';
+import { getTerrainHeight, clearTerrainCache } from './utils';
 import { BurstSystem } from './particles';
 
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
@@ -71,7 +71,7 @@ export class Game {
     burstSystem: BurstSystem;
 
     hemiLight!: THREE.HemisphereLight;
-    bloomPass!: UnrealBloomPass;
+    bloomPass?: UnrealBloomPass; // Optional - disabled on mobile for performance
 
     targetPalette!: Palette;
     visualPalette!: Palette;
@@ -90,6 +90,13 @@ export class Game {
     cameraAngle: number = 0;
     cameraHeightOffset: number = 18.0;
 
+    // Pre-allocated reusable objects to avoid GC pressure
+    private _tempVec3 = new THREE.Vector3();
+    private _tempColor1 = new THREE.Color();
+    private _tempColor2 = new THREE.Color();
+    private _underwaterClearColor = new THREE.Color(0x001122);
+    private _defaultClearColor = new THREE.Color(0x000000);
+
     sunLight!: THREE.DirectionalLight;
     water!: Water;
     skyMesh!: THREE.Mesh;
@@ -99,7 +106,13 @@ export class Game {
 
     dayTime: number = 0;
 
+    // Mobile detection for performance optimizations
+    isMobile: boolean = false;
+
     constructor() {
+        // Detect mobile devices
+        this.isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+                        window.matchMedia('(max-width: 768px)').matches;
         this.audio = new AudioManager();
         this.targetPalette = PALETTE_SPRING;
         this.visualPalette = copyPalette(PALETTE_SPRING);
@@ -119,8 +132,9 @@ export class Game {
         this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance", stencil: false, depth: true });
         this.renderer.setPixelRatio(safePixelRatio);
         this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        // Disable shadows on mobile for better performance
+        this.renderer.shadowMap.enabled = !this.isMobile;
+        this.renderer.shadowMap.type = THREE.PCFShadowMap; // Cheaper than PCFSoftShadowMap
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 0.6; // Was 0.9, drastically reduced
         document.body.appendChild(this.renderer.domElement);
@@ -131,14 +145,17 @@ export class Game {
         const renderPass = new RenderPass(this.scene, this.camera);
         this.composer.addPass(renderPass);
 
-        // Resolution, strength, radius, threshold
-        this.bloomPass = new UnrealBloomPass(
-            new THREE.Vector2(window.innerWidth, window.innerHeight),
-            PALETTE_SPRING.bloom.strength,
-            PALETTE_SPRING.bloom.radius,
-            PALETTE_SPRING.bloom.threshold
-        );
-        this.composer.addPass(this.bloomPass);
+        // Only add bloom on desktop for performance
+        if (!this.isMobile) {
+            // Resolution, strength, radius, threshold
+            this.bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                PALETTE_SPRING.bloom.strength,
+                PALETTE_SPRING.bloom.radius,
+                PALETTE_SPRING.bloom.threshold
+            );
+            this.composer.addPass(this.bloomPass);
+        }
 
         const outputPass = new OutputPass();
         this.composer.addPass(outputPass);
@@ -172,8 +189,8 @@ export class Game {
         this.sunLight.shadow.camera.bottom = -d;
         this.scene.add(this.sunLight);
 
-        this.world = new World(this.scene);
-        this.burstSystem = new BurstSystem(this.scene);
+        this.world = new World(this.scene, this.isMobile);
+        this.burstSystem = new BurstSystem(this.scene, this.isMobile ? 200 : 500);
         this.snake = new Snake(this.scene);
 
         this.snake.onBoostStart = () => this.audio.playBoostStart();
@@ -288,6 +305,9 @@ export class Game {
         this.ep = CONFIG.MAX_EP;
         this.dayTime = 0;
 
+        // Clear terrain cache for fresh game
+        clearTerrainCache();
+
         // Stop any water sounds from previous game
         this.audio.stopWaterSound();
 
@@ -320,7 +340,10 @@ export class Game {
         switch (e.key) {
             case 'ArrowLeft': case 'a': case 'A': this.keys.left = pressed; break;
             case 'ArrowRight': case 'd': case 'D': this.keys.right = pressed; break;
-            case ' ': case 'Spacebar': this.keys.boost = pressed; break;
+            case ' ': case 'Spacebar':
+                e.preventDefault(); // Prevent browser scrolling
+                this.keys.boost = pressed;
+                break;
             case '1': if (pressed) this.setSeason(PALETTE_SPRING); break;
             case '2': if (pressed) this.setSeason(PALETTE_SUMMER); break;
             case '3': if (pressed) this.setSeason(PALETTE_AUTUMN); break;
@@ -477,17 +500,17 @@ export class Game {
                 );
             }
 
-            // Enhanced water trail behind the snake
-            const snakeDirection = new THREE.Vector3(
+            // Enhanced water trail behind the snake - reuse temp vector
+            this._tempVec3.set(
                 Math.cos(this.snake.angle),
                 0,
                 Math.sin(this.snake.angle)
             );
-            // Emit trail more frequently for smoother effect
-            if (Math.random() < 0.8) {
+            // Emit trail less frequently for performance (was 0.8)
+            if (Math.random() < 0.4) {
                 this.burstSystem.emitWaterTrail(
                     this.snake.position,
-                    snakeDirection,
+                    this._tempVec3,
                     this.snake.actualSpeed
                 );
             }
@@ -542,18 +565,18 @@ export class Game {
         const groundH = getTerrainHeight(idealX, idealZ);
         const idealY = Math.max(groundH + 5, headPos.y + this.cameraHeightOffset);
 
-        const idealPos = new THREE.Vector3(idealX, idealY, idealZ);
+        this._tempVec3.set(idealX, idealY, idealZ);
 
-        this.camera.position.lerp(idealPos, 3.0 * dt);
+        this.camera.position.lerp(this._tempVec3, 3.0 * dt);
 
         // Look slightly ahead of the snake
         const lookDist = 12.0;
         const lookX = headPos.x + Math.cos(this.cameraAngle) * lookDist;
         const lookZ = headPos.z + Math.sin(this.cameraAngle) * lookDist;
-        // Look at head Y, smoothed
-        const desiredLookAt = new THREE.Vector3(lookX, headPos.y, lookZ);
+        // Look at head Y, smoothed - reuse _tempVec3 since we're done with idealPos
+        this._tempVec3.set(lookX, headPos.y, lookZ);
 
-        this.cameraLookAtCurrent.lerp(desiredLookAt, 4.0 * dt);
+        this.cameraLookAtCurrent.lerp(this._tempVec3, 4.0 * dt);
 
         this.camera.lookAt(this.cameraLookAtCurrent);
 
@@ -587,13 +610,13 @@ export class Game {
             const intensity = Math.min(0.7, depth * 0.05);
             this.underwaterOverlay.style.opacity = intensity.toString();
 
-            // Add slight blue tint to renderer
-            this.renderer.setClearColor(new THREE.Color(0x001122), 1.0);
+            // Add slight blue tint to renderer - use pre-allocated color
+            this.renderer.setClearColor(this._underwaterClearColor, 1.0);
         } else {
             // Hide overlay
             this.underwaterOverlay.style.opacity = '0';
-            // Reset clear color
-            this.renderer.setClearColor(new THREE.Color(0x000000), 1.0);
+            // Reset clear color - use pre-allocated color
+            this.renderer.setClearColor(this._defaultClearColor, 1.0);
         }
     }
 
@@ -626,11 +649,12 @@ export class Game {
         const alpha = Math.min(1.0, dt * 1.5); // Transition speed factor
         if (isNaN(alpha)) return;
 
+        // Reuse pre-allocated Color objects to avoid GC pressure
         const lerpColor = (c1: number, c2: number) => {
-            const color1 = new THREE.Color(c1);
-            const color2 = new THREE.Color(c2);
-            color1.lerp(color2, alpha);
-            return color1.getHex();
+            this._tempColor1.setHex(c1);
+            this._tempColor2.setHex(c2);
+            this._tempColor1.lerp(this._tempColor2, alpha);
+            return this._tempColor1.getHex();
         };
 
         const lerpValue = (v1: number, v2: number) => v1 + (v2 - v1) * alpha;
@@ -678,10 +702,12 @@ export class Game {
             this.scene.fog.far = palette.fog.far;
         }
 
-        // Update Post Processing
-        this.bloomPass.strength = palette.bloom.strength;
-        this.bloomPass.radius = palette.bloom.radius;
-        this.bloomPass.threshold = palette.bloom.threshold;
+        // Update Post Processing (only if bloom is enabled)
+        if (this.bloomPass) {
+            this.bloomPass.strength = palette.bloom.strength;
+            this.bloomPass.radius = palette.bloom.radius;
+            this.bloomPass.threshold = palette.bloom.threshold;
+        }
 
         // Update Water
         if (this.water) {

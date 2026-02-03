@@ -20,10 +20,11 @@ export class BurstSystem {
     mesh: THREE.Points;
 
     // We use a fixed pool size to avoid garbage collection
-    maxParticles = 500;
+    maxParticles: number;
 
-    constructor(scene: THREE.Scene) {
+    constructor(scene: THREE.Scene, maxParticles: number = 500) {
         this.scene = scene;
+        this.maxParticles = maxParticles;
 
         this.geometry = new THREE.BufferGeometry();
         this.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.maxParticles * 3), 3));

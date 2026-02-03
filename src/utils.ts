@@ -38,6 +38,19 @@ function dot(g: number[], x: number, y: number) {
     return g[0] * x + g[1] * y;
 }
 
+// --- TERRAIN HEIGHT CACHE ---
+const terrainCache = new Map<string, number>();
+const CACHE_RESOLUTION = 0.5;
+const MAX_CACHE_SIZE = 5000;
+
+function quantize(v: number): number {
+    return Math.round(v / CACHE_RESOLUTION) * CACHE_RESOLUTION;
+}
+
+export function clearTerrainCache() {
+    terrainCache.clear();
+}
+
 export function noise2D(xin: number, yin: number): number {
     let n0, n1, n2;
     const F2 = 0.5 * (Math.sqrt(3.0) - 1.0);
@@ -92,8 +105,17 @@ export function noise2D(xin: number, yin: number): number {
     return 70.0 * (n0 + n1 + n2);
 }
 
-// Enhanced Procedural Terrain
+// Enhanced Procedural Terrain with caching
 export function getTerrainHeight(x: number, z: number): number {
+    // Check cache first
+    const qx = quantize(x);
+    const qz = quantize(z);
+    const key = `${qx},${qz}`;
+
+    const cached = terrainCache.get(key);
+    if (cached !== undefined) return cached;
+
+    // Calculate terrain height
     const scale = CONFIG.TERRAIN_SCALE;
 
     // Layer 1: Base Rolling Hills
@@ -116,6 +138,12 @@ export function getTerrainHeight(x: number, z: number): number {
     h -= CONFIG.TERRAIN_HEIGHT * 0.15;
 
     // h clamping removed to allow depth below water level
+
+    // Cache the result with simple eviction when full
+    if (terrainCache.size >= MAX_CACHE_SIZE) {
+        terrainCache.clear();
+    }
+    terrainCache.set(key, h);
 
     return h;
 }

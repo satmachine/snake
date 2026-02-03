@@ -11,13 +11,13 @@ class Chunk {
     x: number;
     z: number;
 
-    constructor(xIdx: number, zIdx: number, group: THREE.Group) {
+    constructor(xIdx: number, zIdx: number, group: THREE.Group, isMobile: boolean = false) {
         this.x = xIdx;
         this.z = zIdx;
 
         const size = CONFIG.CHUNK_SIZE;
-        // Increased segments for smoother terrain
-        const segs = 64;
+        // Reduce segments on mobile for better performance
+        const segs = isMobile ? 32 : 64;
 
         const geo = new THREE.PlaneGeometry(size, size, segs, segs);
 
@@ -192,13 +192,15 @@ export class World {
     scene: THREE.Scene;
     group: THREE.Group;
     chunks: Map<string, Chunk> = new Map();
+    isMobile: boolean;
 
     // Throttle Updates
     lastUpdateX: number = -9999;
     lastUpdateZ: number = -9999;
 
-    constructor(scene: THREE.Scene) {
+    constructor(scene: THREE.Scene, isMobile: boolean = false) {
         this.scene = scene;
+        this.isMobile = isMobile;
         this.group = new THREE.Group();
         this.scene.add(this.group);
     }
@@ -227,7 +229,7 @@ export class World {
 
                 if (!this.chunks.has(key)) {
                     // Create max 1 chunk per frame ideally, but for now just create it
-                    this.chunks.set(key, new Chunk(nx, nz, this.group));
+                    this.chunks.set(key, new Chunk(nx, nz, this.group, this.isMobile));
                 }
             }
         }
