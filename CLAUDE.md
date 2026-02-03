@@ -6,7 +6,10 @@ A 3D snake game built with Three.js and TypeScript.
 
 - `src/definitions.ts` - Game constants and configuration (CONFIG object)
 - `src/entities.ts` - Snake physics and entity logic
-- `src/` - Other game modules (terrain, rendering, etc.)
+- `src/supabase.ts` - Leaderboard API (Supabase client)
+- `src/ui.ts` - UI components (menu, game over, leaderboard display)
+- `src/game.ts` - Main game loop and state management
+- `src/` - Other game modules (terrain, rendering, particles, audio, etc.)
 
 ## Key Systems
 
@@ -26,6 +29,20 @@ The game features an asymmetric gravity system with non-linear acceleration:
 - **Downhill**: Speed builds exponentially with a "faster and faster" snowball effect
 - **Uphill**: Snake struggles and may stall on steep slopes
 - **Physics code**: `src/entities.ts` lines 573-604
+
+### Leaderboard
+
+Public high score leaderboard using Supabase:
+
+- **Backend**: Supabase project `wrlwpzxltkmuxaexnrym` (ap-southeast-2)
+- **Table**: `public.leaderboard` with columns: `id`, `name`, `score`, `created_at`
+- **RLS**: Public read/insert enabled (no auth required for casual game)
+- **API**: `src/supabase.ts` exports `fetchLeaderboard(limit)` and `submitScore(name, score)`
+
+**UX Flow**:
+- Menu screen shows top 10 high scores
+- Game over screen has optional name input (uppercase, 10 char max)
+- Submission is optional - players can restart without submitting
 
 ### Other Mechanics
 - Season changes every 250 echoes (apples)

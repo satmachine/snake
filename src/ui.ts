@@ -1,6 +1,7 @@
 
 import * as THREE from 'three';
 import { CONFIG } from './definitions';
+import { LeaderboardEntry } from './supabase';
 
 export class UI {
     score: number = 0;
@@ -14,9 +15,14 @@ export class UI {
     finalScoreEl: HTMLSpanElement;
     airContainerEl!: HTMLDivElement;
     airBarEl!: HTMLDivElement;
+    leaderboardEl!: HTMLDivElement;
+    nameInputEl!: HTMLInputElement;
+    submitBtnEl!: HTMLButtonElement;
+    submitContainerEl!: HTMLDivElement;
 
     onStartClick: () => void = () => { };
     onRestartClick: () => void = () => { };
+    onScoreSubmit: (name: string) => void = () => { };
 
     currentAccentColor: string = '#00E5FF';
 
@@ -155,24 +161,25 @@ export class UI {
         // Updated text to include Touch controls
         this.menuEl.innerHTML = `
         <h1 style="
-            margin: 0 0 20px 0; 
-            font-size: 80px; 
-            font-weight: 100; 
+            margin: 0 0 20px 0;
+            font-size: 80px;
+            font-weight: 100;
             letter-spacing: 10px;
             color: #fff;
             text-shadow: 0 0 30px rgba(255,255,255,0.5);
         ">YUME SNAKE</h1>
-        <div style="font-size: 14px; color: #aaa; letter-spacing: 2px; margin-bottom: 50px; text-transform: uppercase;">
+        <div style="font-size: 14px; color: #aaa; letter-spacing: 2px; margin-bottom: 30px; text-transform: uppercase;">
             Drift . Explore . Ascend
         </div>
+        <div id="leaderboard-container" style="margin-bottom: 30px;"></div>
         <button id="start-btn" style="
-            padding: 15px 60px; 
-            font-size: 16px; 
+            padding: 15px 60px;
+            font-size: 16px;
             background: transparent;
-            color: white; 
+            color: white;
             border: 1px solid rgba(255,255,255,0.3);
             border-radius: 0;
-            cursor: pointer; 
+            cursor: pointer;
             letter-spacing: 4px;
             transition: all 0.2s;
             font-family: inherit;
@@ -181,6 +188,7 @@ export class UI {
             [A/D / TOUCH SIDES] STEER &nbsp; &nbsp; [HOLD SPACE] BOOST &nbsp; &nbsp; [1-4] SEASONS
         </div>
     `;
+        this.leaderboardEl = this.menuEl.querySelector('#leaderboard-container') as HTMLDivElement;
         this.container.appendChild(this.menuEl);
 
         // Game Over
@@ -198,19 +206,49 @@ export class UI {
         });
         this.gameOverEl.innerHTML = `
         <h1 style="font-size: 40px; font-weight: 100; letter-spacing: 5px; color: #FF4081;">SEVERED</h1>
-        <p style="font-size: 18px; color: #ccc; margin-bottom: 40px;">ECHO: <span id="final-score">0</span></p>
+        <p style="font-size: 18px; color: #ccc; margin-bottom: 20px;">ECHO: <span id="final-score">0</span></p>
+        <div id="submit-container" style="margin-bottom: 30px;">
+            <div style="font-size: 12px; color: #aaa; letter-spacing: 2px; margin-bottom: 10px;">ENTER YOUR NAME</div>
+            <input id="name-input" type="text" maxlength="10" placeholder="AAA" style="
+                width: 120px;
+                padding: 10px 15px;
+                font-size: 18px;
+                background: transparent;
+                border: 1px solid rgba(255,255,255,0.3);
+                color: white;
+                text-align: center;
+                letter-spacing: 3px;
+                font-family: inherit;
+                text-transform: uppercase;
+                margin-bottom: 15px;
+            " />
+            <br/>
+            <button id="submit-btn" style="
+                padding: 10px 40px;
+                font-size: 12px;
+                background: transparent;
+                border: 1px solid #FF4081;
+                color: #FF4081;
+                cursor: pointer;
+                letter-spacing: 2px;
+                font-family: inherit;
+            ">SUBMIT</button>
+        </div>
         <button id="restart-btn" style="
-            padding: 12px 50px; 
-            font-size: 14px; 
-            background: transparent; 
-            border: 1px solid #FF4081; 
-            color: #FF4081; 
-            cursor: pointer; 
+            padding: 12px 50px;
+            font-size: 14px;
+            background: transparent;
+            border: 1px solid #FF4081;
+            color: #FF4081;
+            cursor: pointer;
             letter-spacing: 3px;
         ">RECONNECT</button>
     `;
         this.container.appendChild(this.gameOverEl);
         this.finalScoreEl = this.gameOverEl.querySelector('#final-score') as HTMLSpanElement;
+        this.submitContainerEl = this.gameOverEl.querySelector('#submit-container') as HTMLDivElement;
+        this.nameInputEl = this.gameOverEl.querySelector('#name-input') as HTMLInputElement;
+        this.submitBtnEl = this.gameOverEl.querySelector('#submit-btn') as HTMLButtonElement;
 
         // Hover Effects
         const addHover = (btn: HTMLElement, color: string) => {
@@ -241,6 +279,24 @@ export class UI {
                 addHover(restartBtn, '#FF4081');
                 restartBtn.addEventListener('click', () => {
                     if (this.onRestartClick) this.onRestartClick();
+                });
+            }
+
+            const submitBtn = document.getElementById('submit-btn');
+            if (submitBtn) {
+                addHover(submitBtn, '#FF4081');
+                submitBtn.addEventListener('click', () => {
+                    const name = this.getNameInputValue();
+                    if (name && this.onScoreSubmit) {
+                        this.onScoreSubmit(name);
+                    }
+                });
+            }
+
+            const nameInput = document.getElementById('name-input') as HTMLInputElement;
+            if (nameInput) {
+                nameInput.addEventListener('input', () => {
+                    nameInput.value = nameInput.value.toUpperCase();
                 });
             }
         }, 0);
@@ -313,5 +369,59 @@ export class UI {
 
     hideGameOver() {
         this.gameOverEl.style.display = 'none';
+    }
+
+    updateLeaderboard(entries: LeaderboardEntry[]) {
+        if (!this.leaderboardEl) return;
+
+        if (entries.length === 0) {
+            this.leaderboardEl.innerHTML = '';
+            return;
+        }
+
+        let html = `
+            <div style="font-size: 12px; color: #FF4081; letter-spacing: 3px; margin-bottom: 15px;">HIGH SCORES</div>
+            <div style="font-size: 11px; color: #888; line-height: 1.8;">
+        `;
+
+        entries.forEach((entry, i) => {
+            const rank = (i + 1).toString().padStart(2, ' ');
+            const name = entry.name.padEnd(10, ' ');
+            const score = entry.score.toString().padStart(5, ' ');
+            html += `<div style="font-family: monospace;">${rank}. ${name} ${score}</div>`;
+        });
+
+        html += '</div>';
+        this.leaderboardEl.innerHTML = html;
+    }
+
+    getNameInputValue(): string {
+        if (!this.nameInputEl) return '';
+        return this.nameInputEl.value.toUpperCase().trim().slice(0, 10);
+    }
+
+    resetNameInput() {
+        if (this.nameInputEl) {
+            this.nameInputEl.value = '';
+        }
+    }
+
+    hideSubmitForm() {
+        if (this.submitContainerEl) {
+            this.submitContainerEl.style.display = 'none';
+        }
+    }
+
+    showSubmitForm() {
+        if (this.submitContainerEl) {
+            this.submitContainerEl.style.display = 'block';
+        }
+    }
+
+    setSubmitButtonState(submitting: boolean) {
+        if (this.submitBtnEl) {
+            this.submitBtnEl.disabled = submitting;
+            this.submitBtnEl.innerText = submitting ? 'SUBMITTING...' : 'SUBMIT';
+        }
     }
 }

@@ -7,6 +7,7 @@ import { UI } from './ui';
 import { AudioManager } from './audio';
 import { getTerrainHeight, clearTerrainCache } from './utils';
 import { BurstSystem } from './particles';
+import { fetchLeaderboard, submitScore } from './supabase';
 
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
@@ -109,6 +110,9 @@ export class Game {
     // Mobile detection for performance optimizations
     isMobile: boolean = false;
 
+    // Leaderboard state
+    scoreSubmitted: boolean = false;
+
     constructor() {
         // Detect mobile devices
         this.isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
@@ -172,6 +176,19 @@ export class Game {
             this.audio.startMusic();
             this.startGame();
         };
+        this.ui.onScoreSubmit = async (name: string) => {
+            if (this.scoreSubmitted) return;
+            this.ui.setSubmitButtonState(true);
+            const success = await submitScore(name, this.score);
+            if (success) {
+                this.scoreSubmitted = true;
+                this.ui.hideSubmitForm();
+                await this.loadLeaderboard();
+            }
+            this.ui.setSubmitButtonState(false);
+        };
+
+        this.loadLeaderboard();
 
         this.hemiLight = new THREE.HemisphereLight(this.visualPalette.colors.SKY_TOP, this.visualPalette.colors.GROUND_BASE, 0.4);
         this.scene.add(this.hemiLight);
@@ -303,12 +320,20 @@ export class Game {
         this.scene.add(this.skyMesh);
     }
 
+    async loadLeaderboard() {
+        const entries = await fetchLeaderboard(10);
+        this.ui.updateLeaderboard(entries);
+    }
+
     startGame() {
         this.keys = { left: false, right: false, boost: false };
 
         this.score = 0;
         this.ep = CONFIG.MAX_EP;
         this.dayTime = 0;
+        this.scoreSubmitted = false;
+        this.ui.resetNameInput();
+        this.ui.showSubmitForm();
 
         // Clear terrain cache for fresh game
         clearTerrainCache();

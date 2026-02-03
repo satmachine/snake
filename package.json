@@ -19,6 +19,7 @@
     "vite": "^7.3.0"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.93.3",
     "esbuild": "^0.27.2",
     "fdir": "^6.5.0",
     "nanoid": "^3.3.11",
