@@ -193,7 +193,12 @@ export class Game {
         this.burstSystem = new BurstSystem(this.scene, this.isMobile ? 200 : 500);
         this.snake = new Snake(this.scene);
 
-        this.snake.onBoostStart = () => this.audio.playBoostStart();
+        this.snake.onBoostStart = () => {
+            this.audio.playBoostStart();
+            // Emit boost burst - reduced count on mobile
+            const burstCount = this.isMobile ? 15 : 30;
+            this.burstSystem.emitBoostBurst(this.snake.position, burstCount);
+        };
         this.snake.onCrash = () => this.gameOver();
         this.snake.onLand = (speed) => {
             // Emit dust on landing
@@ -525,6 +530,26 @@ export class Game {
             // Stop water sound if not underwater
             if (this.audio.isWaterSoundPlaying) {
                 this.audio.stopWaterSound();
+            }
+        }
+
+        // Boost visual effects - emit trail while boosting
+        if (this.snake.isBoosting) {
+            // Get direction vector
+            this._tempVec3.set(
+                Math.cos(this.snake.angle),
+                0,
+                Math.sin(this.snake.angle)
+            );
+            // Emit boost trail every frame (particles are short-lived)
+            // Reduce particle count on mobile
+            if (!this.isMobile || Math.random() < 0.5) {
+                this.burstSystem.emitBoostTrail(
+                    this.snake.position,
+                    this._tempVec3,
+                    this.snake.actualSpeed,
+                    this.lastTime / 1000 // time in seconds for spiral rotation
+                );
             }
         }
     }

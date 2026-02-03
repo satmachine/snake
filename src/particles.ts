@@ -163,6 +163,12 @@ export class BurstSystem {
                 // Water trail - slight gravity, more drag
                 p.velocity.y += -2.0 * dt; // Light gravity
                 p.velocity.multiplyScalar(0.92); // More drag for trail
+            } else if (particleColor === 0xFFFFFF || particleColor === 0x88FFFF) {
+                // Boost particles (white speed lines, cyan whirl)
+                // High drag for streaky speed-line effect
+                p.velocity.multiplyScalar(0.85);
+                // Light gravity for natural fall-off
+                p.velocity.y -= 3.0 * dt;
             } else {
                 // Regular particles
                 if (p.velocity.y < 0) {
@@ -287,6 +293,120 @@ export class BurstSystem {
                 size: size,
                 initialSize: size,
                 color: new THREE.Color(0x888888) // Rock gray
+            });
+        }
+    }
+
+    // Boost trail effect - speed lines + whirlwind spirals
+    emitBoostTrail(position: THREE.Vector3, direction: THREE.Vector3, speed: number, time: number) {
+        // Speed lines: 6-10 particles streaking backward
+        const speedLineCount = 6 + Math.floor(Math.random() * 5);
+        for (let i = 0; i < speedLineCount; i++) {
+            if (this.particles.length >= this.maxParticles) break;
+
+            // Spawn around the head with some spread
+            const offsetAngle = Math.random() * Math.PI * 2;
+            const offsetRadius = 0.5 + Math.random() * 1.5;
+            const spawnOffset = new THREE.Vector3(
+                Math.cos(offsetAngle) * offsetRadius,
+                (Math.random() - 0.3) * 1.5, // Slight upward bias
+                Math.sin(offsetAngle) * offsetRadius
+            );
+
+            // Streak backward at 60% snake speed
+            const backSpeed = speed * 0.6;
+            const vx = -direction.x * backSpeed + (Math.random() - 0.5) * 2;
+            const vy = (Math.random() - 0.5) * 1.5;
+            const vz = -direction.z * backSpeed + (Math.random() - 0.5) * 2;
+
+            const life = 0.3 + Math.random() * 0.1;
+            const size = 0.4 + Math.random() * 0.3;
+
+            this.particles.push({
+                position: position.clone().add(spawnOffset),
+                velocity: new THREE.Vector3(vx, vy, vz),
+                life: life,
+                maxLife: life,
+                size: size,
+                initialSize: size,
+                color: new THREE.Color(0xFFFFFF) // White for speed lines
+            });
+        }
+
+        // Whirlwind spirals: 3-5 particles spinning outward
+        const whirlCount = 3 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < whirlCount; i++) {
+            if (this.particles.length >= this.maxParticles) break;
+
+            // Spiral angle based on time for rotation effect
+            const spiralAngle = time * 8.0 + (i / whirlCount) * Math.PI * 2 + Math.random() * 0.5;
+            const outwardSpeed = 3.0 + Math.random() * 4.0;
+
+            // Tangential velocity for spinning effect
+            const tangentX = Math.cos(spiralAngle) * outwardSpeed;
+            const tangentZ = Math.sin(spiralAngle) * outwardSpeed;
+
+            // Add backward drift
+            const vx = tangentX - direction.x * speed * 0.3;
+            const vy = 1.0 + Math.random() * 2.0; // Slight upward
+            const vz = tangentZ - direction.z * speed * 0.3;
+
+            const life = 0.35 + Math.random() * 0.1;
+            const size = 0.5 + Math.random() * 0.4;
+
+            // Spawn position slightly behind and around the head
+            const spawnRadius = 1.0 + Math.random() * 0.5;
+            const spawnOffset = new THREE.Vector3(
+                Math.cos(spiralAngle) * spawnRadius - direction.x * 1.5,
+                (Math.random() - 0.3) * 1.0,
+                Math.sin(spiralAngle) * spawnRadius - direction.z * 1.5
+            );
+
+            this.particles.push({
+                position: position.clone().add(spawnOffset),
+                velocity: new THREE.Vector3(vx, vy, vz),
+                life: life,
+                maxLife: life,
+                size: size,
+                initialSize: size,
+                color: new THREE.Color(0x88FFFF) // Cyan for whirl
+            });
+        }
+    }
+
+    // Initial burst when boost activates
+    emitBoostBurst(position: THREE.Vector3, count: number) {
+        for (let i = 0; i < count; i++) {
+            if (this.particles.length >= this.maxParticles) break;
+
+            // Radial burst with upward bias
+            const angle = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            const speed = 8.0 + Math.random() * 12.0;
+
+            // Bias upward for dramatic effect
+            const vx = speed * Math.sin(phi) * Math.cos(angle) * 0.8;
+            const vy = Math.abs(speed * Math.cos(phi)) * 0.6 + 3.0; // Force upward
+            const vz = speed * Math.sin(phi) * Math.sin(angle) * 0.8;
+
+            const life = 0.4 + Math.random() * 0.2;
+            const size = 0.6 + Math.random() * 0.5;
+
+            // Alternate between white and cyan
+            const color = Math.random() > 0.5 ? 0xFFFFFF : 0x88FFFF;
+
+            this.particles.push({
+                position: position.clone().add(new THREE.Vector3(
+                    (Math.random() - 0.5) * 2,
+                    (Math.random() - 0.5) * 1,
+                    (Math.random() - 0.5) * 2
+                )),
+                velocity: new THREE.Vector3(vx, vy, vz),
+                life: life,
+                maxLife: life,
+                size: size,
+                initialSize: size,
+                color: new THREE.Color(color)
             });
         }
     }

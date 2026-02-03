@@ -196,12 +196,15 @@ export const CONFIG = {
   MAX_SPEED: 50.0,
 
   // Slope Physics & Gravity (Enhanced for Air Time)
-  GRAVITY_ACCEL: 30.0,     // Speed gain/loss on slopes
-  PHYSICS_GRAVITY: 60.0,   // Vertical gravity force (m/s^2) for falling
-  FRICTION: 2.0,           // Natural drag
-  MIN_STALL_SPEED: 4.0,    // Speed at which control becomes sluggish
-  MAX_DOWNHILL_SPEED: 80.0,// Cap for gravity stacking
-  SLOPE_SENSITIVITY: 2.0,  // Terrain angle affects physics
+  GRAVITY_ACCEL: 45.0,           // Speed gain/loss on slopes (increased from 30.0)
+  PHYSICS_GRAVITY: 60.0,         // Vertical gravity force (m/s^2) for falling
+  FRICTION: 2.0,                 // Base friction (for reference)
+  FRICTION_DOWNHILL: 0.5,        // Very low - let momentum build downhill
+  FRICTION_UPHILL: 3.5,          // Higher - struggle to recover uphill
+  MIN_STALL_SPEED: 4.0,          // Speed at which control becomes sluggish
+  MAX_DOWNHILL_SPEED: 200.0,     // Cap for gravity stacking (doubled for extreme snowball effect)
+  SLOPE_SENSITIVITY: 2.5,        // Terrain angle affects physics (increased from 2.0)
+  DOWNHILL_ACCEL_EXPONENT: 1.3,  // Non-linear "faster and faster" effect
 
   // Air Handling
   AIR_CONTROL: 0.3,        // Reduced steering while in air
@@ -221,7 +224,7 @@ export const CONFIG = {
   MAX_CLIMBABLE_SLOPE: 2.5,
 
   // Boost & EP
-  BOOST_SPEED_MULTIPLIER: 1.8,
+  BOOST_SPEED_MULTIPLIER: 7.2,
   MAX_EP: 100,
   EP_PER_APPLE: 30,
   EP_DRAIN_PER_SEC: 40.0, // Drains full bar in 2.5s

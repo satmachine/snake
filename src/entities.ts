@@ -570,15 +570,37 @@ export class Snake {
 
         const slope = (nextGroundH - currentGroundH) / lookAheadDist;
 
-        // Gravity influence on speed (Accellerate downhill, Decelerate uphill)
+        // Gravity influence on speed (Accelerate downhill, Decelerate uphill)
         // Only apply if grounded or very close to ground
         if (!this.isAirborne) {
-            const gravityForce = -slope * CONFIG.GRAVITY_ACCEL * CONFIG.SLOPE_SENSITIVITY;
+            const isDownhill = slope < 0;
+            let gravityForce = -slope * CONFIG.GRAVITY_ACCEL * CONFIG.SLOPE_SENSITIVITY;
+
+            // Non-linear downhill acceleration: the faster you're going, the more you accelerate
+            if (isDownhill && this.actualSpeed > engineSpeed) {
+                const excessSpeedRatio = (this.actualSpeed - engineSpeed) / (CONFIG.MAX_DOWNHILL_SPEED - engineSpeed);
+                const clampedRatio = Math.max(0, Math.min(1, excessSpeedRatio));
+                const nonLinearBoost = 1.0 + Math.pow(clampedRatio, CONFIG.DOWNHILL_ACCEL_EXPONENT);
+                gravityForce *= nonLinearBoost;
+            }
+
             this.actualSpeed += gravityForce * dt;
 
-            // Friction
+            // Asymmetric friction: different behavior uphill vs downhill
             const speedDiff = engineSpeed - this.actualSpeed;
-            const frictionCoeff = this.actualSpeed > engineSpeed ? CONFIG.FRICTION * 0.5 : CONFIG.FRICTION * 2.0;
+            let frictionCoeff: number;
+
+            if (isDownhill && this.actualSpeed > engineSpeed) {
+                // Going fast downhill: very low friction, let momentum build (snowball effect)
+                frictionCoeff = CONFIG.FRICTION_DOWNHILL;
+            } else if (!isDownhill && this.actualSpeed < engineSpeed) {
+                // Struggling uphill: high friction, hard to recover speed
+                frictionCoeff = CONFIG.FRICTION_UPHILL;
+            } else {
+                // Neutral/transitional: use base friction
+                frictionCoeff = CONFIG.FRICTION;
+            }
+
             this.actualSpeed += speedDiff * frictionCoeff * dt;
         } else {
             // Air resistance
