@@ -379,19 +379,51 @@ export class UI {
             return;
         }
 
+        // Rank colors: gold, silver, bronze, then gray
+        const rankColors = ['#FFD700', '#C0C0C0', '#CD7F32'];
+        const defaultColor = '#AAAAAA';
+
         let html = `
-            <div style="font-size: 12px; color: #FF4081; letter-spacing: 3px; margin-bottom: 15px;">HIGH SCORES</div>
-            <div style="font-size: 11px; color: #888; line-height: 1.8;">
+            <div style="
+                background: linear-gradient(180deg, rgba(20,0,30,0.95) 0%, rgba(10,0,20,0.98) 100%);
+                border: 2px solid #FF4081;
+                border-radius: 12px;
+                padding: 20px 25px;
+                box-shadow: 0 0 30px rgba(255,64,129,0.3), inset 0 0 60px rgba(255,64,129,0.05);
+            ">
+                <div style="
+                    font-size: 24px;
+                    color: #FF4081;
+                    letter-spacing: 4px;
+                    margin-bottom: 20px;
+                    text-align: center;
+                    text-shadow: 0 0 10px #FF4081, 0 0 20px #FF4081, 0 0 40px #FF4081;
+                ">HIGH SCORES</div>
+                <div style="line-height: 1.6;">
         `;
 
         entries.forEach((entry, i) => {
-            const rank = (i + 1).toString().padStart(2, ' ');
+            const rank = i + 1;
+            const rankStr = rank.toString().padStart(2, ' ');
             const name = entry.name.padEnd(10, ' ');
             const score = entry.score.toString().padStart(5, ' ');
-            html += `<div style="font-family: monospace;">${rank}. ${name} ${score}</div>`;
+
+            const color = rankColors[i] || defaultColor;
+            const fontSize = rank <= 3 ? '18px' : '16px';
+            const glow = rank <= 3 ? `text-shadow: 0 0 8px ${color}, 0 0 16px ${color};` : '';
+            const border = i < entries.length - 1 ? 'border-bottom: 1px solid rgba(255,255,255,0.08);' : '';
+
+            html += `<div style="
+                font-family: monospace;
+                font-size: ${fontSize};
+                color: ${color};
+                padding: 6px 0;
+                ${glow}
+                ${border}
+            ">${rankStr}. ${name} ${score}</div>`;
         });
 
-        html += '</div>';
+        html += '</div></div>';
         this.leaderboardEl.innerHTML = html;
     }
 
