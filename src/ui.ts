@@ -171,7 +171,6 @@ export class UI {
         <div style="font-size: 14px; color: #aaa; letter-spacing: 2px; margin-bottom: 30px; text-transform: uppercase;">
             Drift . Explore . Ascend
         </div>
-        <div id="leaderboard-container" style="margin-bottom: 30px;"></div>
         <button id="start-btn" style="
             padding: 15px 60px;
             font-size: 16px;
@@ -184,6 +183,7 @@ export class UI {
             transition: all 0.2s;
             font-family: inherit;
         ">INITIALIZE</button>
+        <div id="leaderboard-container" style="margin-top: 30px;"></div>
         <div style="margin-top: 30px; font-size: 10px; color: #666; letter-spacing: 1px;">
             [A/D / TOUCH SIDES] STEER &nbsp; &nbsp; [HOLD SPACE] BOOST &nbsp; &nbsp; [1-4] SEASONS
         </div>
@@ -379,27 +379,24 @@ export class UI {
             return;
         }
 
-        // Rank colors: gold, silver, bronze, then gray
-        const rankColors = ['#FFD700', '#C0C0C0', '#CD7F32'];
-        const defaultColor = '#AAAAAA';
-
         let html = `
             <div style="
-                background: linear-gradient(180deg, rgba(20,0,30,0.95) 0%, rgba(10,0,20,0.98) 100%);
-                border: 2px solid #FF4081;
+                background: rgba(0,0,0,0.1);
+                border: 1px solid rgba(255,255,255,0.3);
                 border-radius: 12px;
-                padding: 20px 25px;
-                box-shadow: 0 0 30px rgba(255,64,129,0.3), inset 0 0 60px rgba(255,64,129,0.05);
+                padding: 20px 30px;
             ">
                 <div style="
-                    font-size: 24px;
-                    color: #FF4081;
-                    letter-spacing: 4px;
+                    font-family: 'Courier New', monospace;
+                    font-size: 36px;
+                    font-weight: 100;
+                    color: #fff;
+                    letter-spacing: 6px;
                     margin-bottom: 20px;
                     text-align: center;
-                    text-shadow: 0 0 10px #FF4081, 0 0 20px #FF4081, 0 0 40px #FF4081;
+                    text-shadow: 0 0 30px rgba(255,255,255,0.5);
                 ">HIGH SCORES</div>
-                <div style="line-height: 1.6;">
+                <div style="line-height: 1.4;">
         `;
 
         entries.forEach((entry, i) => {
@@ -408,18 +405,16 @@ export class UI {
             const name = entry.name.padEnd(10, ' ');
             const score = entry.score.toString().padStart(5, ' ');
 
-            const color = rankColors[i] || defaultColor;
-            const fontSize = rank <= 3 ? '18px' : '16px';
-            const glow = rank <= 3 ? `text-shadow: 0 0 8px ${color}, 0 0 16px ${color};` : '';
-            const border = i < entries.length - 1 ? 'border-bottom: 1px solid rgba(255,255,255,0.08);' : '';
+            const glow = rank <= 3 ? 'text-shadow: 0 0 20px rgba(255,255,255,0.4);' : '';
 
             html += `<div style="
-                font-family: monospace;
-                font-size: ${fontSize};
-                color: ${color};
-                padding: 6px 0;
+                font-family: 'Courier New', monospace;
+                font-size: 24px;
+                font-weight: 100;
+                color: rgba(255,255,255,0.8);
+                letter-spacing: 4px;
+                padding: 4px 0;
                 ${glow}
-                ${border}
             ">${rankStr}. ${name} ${score}</div>`;
         });
 
