@@ -996,7 +996,7 @@ export class AppleManager {
 
                 if (this.onEat) this.onEat(pos);
 
-                this.snake.growPending++;
+                this.snake.growPending += CONFIG.GROWTH_PER_APPLE;
                 ate = true;
             }
         }

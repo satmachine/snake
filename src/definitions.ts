@@ -192,6 +192,7 @@ export const CONFIG = {
   SEGMENT_RADIUS: 0.5,
 
   // Endless Progression
+  GROWTH_PER_APPLE: 3,
   SPEED_INCREMENT_PER_APPLE: 0.3,
   MAX_SPEED: 50.0,
 
