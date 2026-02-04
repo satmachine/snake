@@ -5,9 +5,12 @@ import { Snake, AppleManager, updateAssetMaterials } from './entities';
 import { World } from './world';
 import { UI } from './ui';
 import { AudioManager } from './audio';
-import { getTerrainHeight, clearTerrainCache } from './utils';
+import { getTerrainHeight, clearTerrainCache, seedTerrain } from './utils';
 import { BurstSystem } from './particles';
 import { fetchLeaderboard, submitScore } from './supabase';
+import { NetworkManager } from './net/network';
+import { LobbyManager } from './net/lobby';
+import type { PlayerId, LobbyStartPayload } from './net/protocol';
 
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
@@ -113,6 +116,14 @@ export class Game {
     // Leaderboard state
     scoreSubmitted: boolean = false;
 
+    // Multiplayer
+    mode: 'singleplayer' | 'multiplayer' = 'singleplayer';
+    networkManager: NetworkManager | null = null;
+    lobbyManager: LobbyManager | null = null;
+    multiplayerSnakes: Map<PlayerId, Snake> = new Map();
+    localPlayerId: PlayerId = '';
+    pendingStartPayload: LobbyStartPayload | null = null;
+
     constructor() {
         // Detect mobile devices
         this.isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
@@ -186,6 +197,36 @@ export class Game {
                 await this.loadLeaderboard();
             }
             this.ui.setSubmitButtonState(false);
+        };
+
+        // --- MULTIPLAYER UI CALLBACKS ---
+        this.ui.onCreateGame = (name: string) => {
+            this.audio.resumeContext();
+            this.createMultiplayerRoom(name);
+        };
+        this.ui.onJoinGame = (code: string, name: string) => {
+            this.audio.resumeContext();
+            this.joinMultiplayerRoom(code, name);
+        };
+        this.ui.onLobbyStart = () => {
+            if (this.lobbyManager) {
+                this.lobbyManager.startGame();
+            }
+        };
+        this.ui.onLobbyLeave = () => {
+            this.leaveMultiplayerRoom();
+        };
+        this.ui.onMpPlayAgain = () => {
+            this.ui.hideMpResults();
+            // Return to lobby if still connected, otherwise menu
+            if (this.networkManager?.connected && this.lobbyManager) {
+                this.state = GameState.LOBBY;
+                this.ui.showLobby(this.networkManager.roomCode, this.networkManager.isHost);
+                this.ui.updateLobbyPlayers(this.lobbyManager.getPlayerList());
+            } else {
+                this.state = GameState.MENU;
+                this.ui.showMenu();
+            }
         };
 
         this.loadLeaderboard();
@@ -437,7 +478,7 @@ export class Game {
                 this.water.material.uniforms['time'].value += dt * 0.5;
             }
         }
-        else if (this.state === GameState.GAME_OVER || this.state === GameState.MENU) {
+        else if (this.state === GameState.GAME_OVER || this.state === GameState.MENU || this.state === GameState.LOBBY) {
             const t = (time || 0) * 0.0001;
             this.camera.position.x = Math.cos(t) * 60;
             this.camera.position.z = Math.sin(t) * 60;
@@ -824,5 +865,135 @@ export class Game {
         );
 
         this.scene.add(this.water);
+    }
+
+    // --- MULTIPLAYER METHODS ---
+
+    async createMultiplayerRoom(name: string) {
+        this.mode = 'multiplayer';
+        this.networkManager = new NetworkManager();
+        this.lobbyManager = new LobbyManager(this.networkManager);
+        this.localPlayerId = this.networkManager.playerId;
+
+        // Handle lobby state updates
+        this.lobbyManager.onPlayersChanged = (players) => {
+            this.ui.updateLobbyPlayers(players);
+        };
+
+        // Handle game start
+        this.lobbyManager.onGameStart = (payload) => {
+            this.pendingStartPayload = payload;
+            this.startMultiplayerGame(payload);
+        };
+
+        const code = await this.lobbyManager.createRoom(name);
+        this.state = GameState.LOBBY;
+        this.ui.showLobby(code, true);
+        this.ui.updateLobbyPlayers(this.lobbyManager.getPlayerList());
+    }
+
+    async joinMultiplayerRoom(code: string, name: string) {
+        this.mode = 'multiplayer';
+        this.networkManager = new NetworkManager();
+        this.lobbyManager = new LobbyManager(this.networkManager);
+        this.localPlayerId = this.networkManager.playerId;
+
+        // Handle lobby state updates
+        this.lobbyManager.onPlayersChanged = (players) => {
+            this.ui.updateLobbyPlayers(players);
+        };
+
+        // Handle game start
+        this.lobbyManager.onGameStart = (payload) => {
+            this.pendingStartPayload = payload;
+            this.startMultiplayerGame(payload);
+        };
+
+        const success = await this.lobbyManager.joinRoom(code, name);
+        if (success) {
+            this.state = GameState.LOBBY;
+            this.ui.showLobby(code, false);
+        } else {
+            // Failed to join - reset
+            this.mode = 'singleplayer';
+            this.networkManager = null;
+            this.lobbyManager = null;
+        }
+    }
+
+    leaveMultiplayerRoom() {
+        if (this.lobbyManager) {
+            this.lobbyManager.leaveRoom();
+            this.lobbyManager.cleanup();
+            this.lobbyManager = null;
+        }
+        if (this.networkManager) {
+            this.networkManager.disconnect();
+            this.networkManager = null;
+        }
+        this.mode = 'singleplayer';
+        this.state = GameState.MENU;
+        this.ui.hideLobby();
+        this.ui.showMenu();
+    }
+
+    startMultiplayerGame(payload: LobbyStartPayload) {
+        // Seed terrain so all clients generate the same world
+        seedTerrain(payload.terrainSeed);
+        clearTerrainCache();
+
+        this.state = GameState.PLAYING;
+        this.ui.hideLobby();
+        this.ui.hideMenu();
+        this.ui.hideGameOver();
+
+        this.score = 0;
+        this.ep = CONFIG.MAX_EP;
+        this.dayTime = 0;
+        this.keys = { left: false, right: false, boost: false };
+
+        this.ui.updateScore(0);
+        this.ui.updateEp(this.ep, this.maxEp);
+
+        this.world.reset();
+        this.appleManager.reset();
+        this.burstSystem.reset();
+
+        // Clean up any existing multiplayer snakes
+        for (const [, s] of this.multiplayerSnakes) {
+            s.mesh.parent?.remove(s.mesh);
+        }
+        this.multiplayerSnakes.clear();
+
+        // Create snakes for all players
+        const players = this.lobbyManager?.getPlayerList() || [];
+        for (const pid of payload.playerOrder) {
+            const spawn = payload.spawns[pid];
+            const player = players.find(p => p.id === pid);
+            const snake = pid === this.localPlayerId ? this.snake : new Snake(this.scene);
+
+            snake.resetAt(spawn.x, spawn.z, spawn.angle, CONFIG.BASE_SNAKE_SPEED);
+            if (player) {
+                snake.setMultiplayerColor(player.colorIndex);
+            }
+
+            this.multiplayerSnakes.set(pid, snake);
+        }
+
+        // Update world around local snake
+        this.world.update(this.snake.position.x, this.snake.position.z);
+
+        // Spawn initial apples
+        for (let i = 0; i < 5; i++) {
+            const tree = this.world.getRandomTree();
+            if (tree) this.appleManager.spawnApple(tree);
+        }
+
+        // Camera setup
+        const headPos = this.snake.bodyMeshes[0].position.clone();
+        this.cameraLookAtCurrent.copy(headPos);
+        this.cameraAngle = this.snake.angle;
+
+        this.audio.startMusic();
     }
 }

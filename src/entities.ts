@@ -2,8 +2,9 @@
 
 
 import * as THREE from 'three';
-import { CONFIG, Vector2, PALETTE_SPRING, Palette } from './definitions';
+import { CONFIG, Vector2, PALETTE_SPRING, Palette, MULTIPLAYER_COLORS } from './definitions';
 import { randomInt, randomFloat, randomNormal, getTerrainHeight } from './utils';
+import type { SnakeNetState, PathKeypoint } from './net/protocol';
 
 // --- TEXTURE HELPERS ---
 function createGrassTexture() {
@@ -889,6 +890,123 @@ export class Snake {
                 currentPathIndex++;
             }
         }
+    }
+
+    // --- MULTIPLAYER METHODS ---
+
+    setMultiplayerColor(colorIndex: number): void {
+        const mpColor = MULTIPLAYER_COLORS[colorIndex] || MULTIPLAYER_COLORS[0];
+        this.currentHeadColor = mpColor.head;
+        this.headMat.color.setHex(mpColor.head);
+        this.headMat.emissive.setHex(mpColor.head);
+        this.bodyMat.color.setHex(mpColor.body);
+        this.bodyMat.emissive.setHex(mpColor.body);
+        this.playerLight.color.setHex(mpColor.emissive);
+    }
+
+    resetAt(x: number, z: number, angle: number, speed: number): void {
+        this.bodyMeshes.forEach(m => this.mesh.remove(m));
+        this.bodyMeshes = [];
+        this.path = [];
+
+        const h = getTerrainHeight(x, z);
+        this.position.set(x, h, z);
+        this.angle = angle;
+        this.turnFactor = 0;
+        this.growPending = 0;
+
+        this.targetBaseSpeed = speed;
+        this.actualSpeed = speed;
+        this.verticalVelocity = 0;
+        this.isAirborne = false;
+
+        this.isBoosting = false;
+        this.isSkimming = false;
+        this.airTimer = CONFIG.MAX_AIR_TIME;
+        this.invulnerableTimer = 3.0;
+        this.isStalled = false;
+
+        // Pre-fill path
+        const startLen = CONFIG.SNAKE_START_LENGTH;
+        for (let i = 0; i <= startLen * 20; i++) {
+            const dist = i * (CONFIG.SEGMENT_SPACING / 10);
+            this.path.push(new THREE.Vector3(
+                this.position.x - Math.cos(angle) * dist,
+                this.position.y,
+                this.position.z - Math.sin(angle) * dist
+            ));
+        }
+
+        for (let i = 0; i < startLen; i++) {
+            this.addSegment(i === 0);
+        }
+        this.updateBodyVisuals();
+    }
+
+    serialize(playerId: string, lastProcessedSeq: number = 0): SnakeNetState {
+        return {
+            playerId,
+            x: this.position.x,
+            y: this.position.y,
+            z: this.position.z,
+            angle: this.angle,
+            speed: this.actualSpeed,
+            vy: this.verticalVelocity,
+            alive: true,
+            score: 0, // Score tracked externally
+            segmentCount: this.bodyMeshes.length,
+            isBoosting: this.isBoosting,
+            lastProcessedSeq,
+        };
+    }
+
+    applyNetState(state: SnakeNetState): void {
+        this.position.set(state.x, state.y, state.z);
+        this.angle = state.angle;
+        this.actualSpeed = state.speed;
+        this.verticalVelocity = state.vy;
+        this.isBoosting = state.isBoosting;
+
+        // Grow or shrink to match segment count
+        while (this.bodyMeshes.length < state.segmentCount) {
+            this.addSegment(false);
+        }
+
+        // Record path for body interpolation
+        const PATH_POINT_SPACING = 0.2;
+        if (this.path.length === 0 ||
+            this.position.distanceTo(this.path[0]) >= PATH_POINT_SPACING) {
+            this.path.unshift(this.position.clone());
+        }
+        const approxLimit = 50 + (this.bodyMeshes.length * 20);
+        if (this.path.length > approxLimit) {
+            this.path.length = approxLimit;
+        }
+    }
+
+    getPathKeypoints(interval: number = 5): PathKeypoint[] {
+        const points: PathKeypoint[] = [];
+        for (let i = 0; i < this.path.length; i += interval) {
+            const p = this.path[i];
+            points.push({ x: p.x, y: p.y, z: p.z });
+        }
+        return points;
+    }
+
+    applyPathKeypoints(keypoints: PathKeypoint[]): void {
+        // Rebuild path from sparse keypoints by interpolating
+        this.path = [];
+        for (let i = 0; i < keypoints.length; i++) {
+            this.path.push(new THREE.Vector3(keypoints[i].x, keypoints[i].y, keypoints[i].z));
+        }
+    }
+
+    hide(): void {
+        this.mesh.visible = false;
+    }
+
+    show(): void {
+        this.mesh.visible = true;
     }
 }
 
