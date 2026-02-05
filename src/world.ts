@@ -4,6 +4,37 @@ import { CONFIG } from './definitions';
 import { getTerrainHeight, getBiome, randomFloat } from './utils';
 import { Prop, PropFactory, ASSETS } from './entities';
 
+interface ChunkRequest {
+    x: number;
+    z: number;
+}
+
+class ChunkGenerator {
+    private queue: ChunkRequest[] = [];
+    private generating: boolean = false;
+
+    request(x: number, z: number): void {
+        // Avoid duplicates
+        if (this.queue.some(r => r.x === x && r.z === z)) return;
+        this.queue.push({ x, z });
+    }
+
+    async generateNext(group: THREE.Group, isMobile: boolean): Promise<{ key: string; chunk: Chunk } | null> {
+        if (this.queue.length === 0 || this.generating) return null;
+
+        this.generating = true;
+        const req = this.queue.shift()!;
+
+        // Yield to event loop before heavy work
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const chunk = new Chunk(req.x, req.z, group, isMobile);
+        this.generating = false;
+
+        return { key: `${req.x},${req.z}`, chunk };
+    }
+}
+
 class Chunk {
     mesh: THREE.Mesh;
     instancedMeshes: THREE.InstancedMesh[] = [];
@@ -193,6 +224,7 @@ export class World {
     group: THREE.Group;
     chunks: Map<string, Chunk> = new Map();
     isMobile: boolean;
+    private chunkGenerator = new ChunkGenerator();
 
     // Throttle Updates
     lastUpdateX: number = -9999;
@@ -228,11 +260,18 @@ export class World {
                 activeKeys.add(key);
 
                 if (!this.chunks.has(key)) {
-                    // Create max 1 chunk per frame ideally, but for now just create it
-                    this.chunks.set(key, new Chunk(nx, nz, this.group, this.isMobile));
+                    // Queue for async generation
+                    this.chunkGenerator.request(nx, nz);
                 }
             }
         }
+
+        // Process one chunk per frame
+        this.chunkGenerator.generateNext(this.group, this.isMobile).then(result => {
+            if (result) {
+                this.chunks.set(result.key, result.chunk);
+            }
+        });
 
         for (const [key, chunk] of this.chunks) {
             if (!activeKeys.has(key)) {

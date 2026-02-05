@@ -172,18 +172,20 @@ export class LobbyManager {
     ): Record<PlayerId, { x: number; z: number; angle: number }> {
         const spawns: Record<PlayerId, { x: number; z: number; angle: number }> = {};
         const minDistance = 50;
+        const minObstacleDistance = 20; // Minimum distance from any obstacle
         const usedPositions: { x: number; z: number }[] = [];
 
         for (const pid of playerIds) {
             let found = false;
             let attempts = 0;
-            while (!found && attempts < 200) {
+            while (!found && attempts < 300) { // Increased from 200 to 300
                 const tx = (Math.random() - 0.5) * 200;
                 const tz = (Math.random() - 0.5) * 200;
                 const h = getTerrainHeight(tx, tz);
 
                 // Must be on land, not too high
                 if (h > -18 && h < 10) {
+                    // Check distance from other players
                     let tooClose = false;
                     for (const used of usedPositions) {
                         const dx = tx - used.x;
@@ -193,17 +195,39 @@ export class LobbyManager {
                             break;
                         }
                     }
+
+                    // Check obstacles (approximate - sample grid around spawn)
                     if (!tooClose) {
-                        const angle = Math.random() * Math.PI * 2;
-                        spawns[pid] = { x: tx, z: tz, angle };
-                        usedPositions.push({ x: tx, z: tz });
-                        found = true;
+                        let hasObstacle = false;
+                        for (let ox = -minObstacleDistance; ox <= minObstacleDistance; ox += 5) {
+                            for (let oz = -minObstacleDistance; oz <= minObstacleDistance; oz += 5) {
+                                const checkX = tx + ox;
+                                const checkZ = tz + oz;
+                                const checkH = getTerrainHeight(checkX, checkZ);
+
+                                // Detect steep slopes (likely obstacle or cliff)
+                                const slope = Math.abs(checkH - h);
+                                if (slope > 5.0) {
+                                    hasObstacle = true;
+                                    break;
+                                }
+                            }
+                            if (hasObstacle) break;
+                        }
+
+                        if (!hasObstacle) {
+                            const angle = Math.random() * Math.PI * 2;
+                            spawns[pid] = { x: tx, z: tz, angle };
+                            usedPositions.push({ x: tx, z: tz });
+                            found = true;
+                        }
                     }
                 }
                 attempts++;
             }
             // Fallback if no safe position found
             if (!found) {
+                console.warn(`Could not find safe spawn for player ${pid}, using fallback`);
                 const angle = (playerIds.indexOf(pid) / playerIds.length) * Math.PI * 2;
                 const dist = 60;
                 spawns[pid] = {

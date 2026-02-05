@@ -414,6 +414,7 @@ export class Snake {
 
     invulnerableTimer: number = 0;
     isStalled: boolean = false;
+    private isDead: boolean = false;
     isUnderwater: boolean = false;
     wasUnderwater: boolean = false;
     isSkimming: boolean = false;
@@ -498,7 +499,7 @@ export class Snake {
         this.isBoosting = false;
         this.isSkimming = false;
         this.airTimer = CONFIG.MAX_AIR_TIME;
-        this.invulnerableTimer = 2.0;
+        this.invulnerableTimer = 3.0;
         this.isStalled = false;
 
         // Pre-fill path to avoid initial jitter
@@ -714,6 +715,7 @@ export class Snake {
         // Only crash on very steep slopes, and give some tolerance
         if (slope > CONFIG.MAX_CLIMBABLE_SLOPE * 1.2 && this.invulnerableTimer <= 0 && !this.isAirborne && this.actualSpeed > 5) {
             // Only crash on walls if on ground and moving fast enough
+            this.isDead = true;
             if (this.onCrash) this.onCrash();
             return false;
         }
@@ -745,6 +747,7 @@ export class Snake {
                     const obstacleHeight = obs.radius > 3 ? obs.radius * 2 : obs.radius; // Trees have larger radius
                     const clearance = obs.radius > 3 ? 8.0 : 2.0; // More clearance for larger obstacles (trees)
                     if (this.position.y < obs.position.y + obstacleHeight + clearance) {
+                        this.isDead = true;
                         if (this.onCrash) this.onCrash();
                         return false;
                     }
@@ -770,6 +773,7 @@ export class Snake {
         if (this.isUnderwater) {
             this.airTimer -= dt;
             if (this.airTimer <= 0) {
+                this.isDead = true;
                 if (this.onCrash) this.onCrash();
                 return false;
             }
@@ -819,6 +823,7 @@ export class Snake {
                 if (distSq < hitDist * hitDist) {
                     // More lenient height check - allow jumping over tail
                     if (Math.abs(this.position.y - segWorldPos.y) < 3.0) {
+                        this.isDead = true;
                         if (this.onCrash) this.onCrash();
                         return false;
                     }
@@ -894,6 +899,30 @@ export class Snake {
                 distAccumulator += d;
                 currentPathIndex++;
             }
+        }
+
+        // Visual feedback during invulnerability
+        if (this.invulnerableTimer > 0) {
+            const pulseFreq = 3.0; // 3 pulses per second
+            const pulsePhase = (this.invulnerableTimer * pulseFreq) % 1.0;
+            const opacity = 0.3 + 0.7 * Math.abs(Math.sin(pulsePhase * Math.PI));
+
+            this.mesh.traverse((obj) => {
+                if (obj instanceof THREE.Mesh && obj.material) {
+                    const mat = obj.material as THREE.MeshStandardMaterial;
+                    mat.transparent = true;
+                    mat.opacity = opacity;
+                }
+            });
+        } else {
+            // Restore full opacity
+            this.mesh.traverse((obj) => {
+                if (obj instanceof THREE.Mesh && obj.material) {
+                    const mat = obj.material as THREE.MeshStandardMaterial;
+                    mat.transparent = false;
+                    mat.opacity = 1.0;
+                }
+            });
         }
     }
 
@@ -1004,6 +1033,16 @@ export class Snake {
         for (let i = 0; i < keypoints.length; i++) {
             this.path.push(new THREE.Vector3(keypoints[i].x, keypoints[i].y, keypoints[i].z));
         }
+    }
+
+    revive(): void {
+        // Restore snake to alive state (for when server overrides client prediction)
+        this.isDead = false;
+        this.invulnerableTimer = 1.0; // Brief invulnerability after revival
+    }
+
+    isAlive(): boolean {
+        return !this.isDead;
     }
 
     hide(): void {
