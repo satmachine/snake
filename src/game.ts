@@ -438,7 +438,7 @@ export class Game {
         this.appleManager.reset();
         this.burstSystem.reset();
 
-        this.world.update(this.snake.position.x, this.snake.position.z);
+        this.world.ensureInitialChunks(this.snake.position.x, this.snake.position.z);
 
         for (let i = 0; i < 5; i++) {
             const tree = this.world.getRandomTree();
@@ -1700,7 +1700,7 @@ export class Game {
         this.appleManager.reset();
 
         // Update world around local snake
-        this.world.update(this.snake.position.x, this.snake.position.z);
+        this.world.ensureInitialChunks(this.snake.position.x, this.snake.position.z);
 
         // Spawn initial apples (host only)
         if (this.isHost) {

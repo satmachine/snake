@@ -12,11 +12,25 @@ interface ChunkRequest {
 class ChunkGenerator {
     private queue: ChunkRequest[] = [];
     private generating: boolean = false;
+    private playerX: number = 0;
+    private playerZ: number = 0;
+
+    updatePlayerPosition(x: number, z: number): void {
+        this.playerX = x;
+        this.playerZ = z;
+    }
 
     request(x: number, z: number): void {
         // Avoid duplicates
         if (this.queue.some(r => r.x === x && r.z === z)) return;
         this.queue.push({ x, z });
+
+        // Sort by distance to player (closest first)
+        this.queue.sort((a, b) => {
+            const distA = Math.abs(a.x - this.playerX) + Math.abs(a.z - this.playerZ);
+            const distB = Math.abs(b.x - this.playerX) + Math.abs(b.z - this.playerZ);
+            return distA - distB;
+        });
     }
 
     async generateNext(group: THREE.Group, isMobile: boolean): Promise<{ key: string; chunk: Chunk } | null> {
@@ -32,6 +46,13 @@ class ChunkGenerator {
         this.generating = false;
 
         return { key: `${req.x},${req.z}`, chunk };
+    }
+
+    generateSync(x: number, z: number, group: THREE.Group, isMobile: boolean): { key: string; chunk: Chunk } {
+        // Synchronous generation for initial chunk
+        // Does NOT use setTimeout - blocks until complete
+        const chunk = new Chunk(x, z, group, isMobile);
+        return { key: `${x},${z}`, chunk };
     }
 }
 
@@ -237,6 +258,49 @@ export class World {
         this.scene.add(this.group);
     }
 
+    ensureInitialChunks(playerX: number, playerZ: number): void {
+        // Calculate chunk indices for player position
+        const cz = CONFIG.CHUNK_SIZE;
+        const cx = Math.floor(playerX / cz);
+        const czIdx = Math.floor(playerZ / cz);
+
+        // Generate center 5x5 grid synchronously for better tree distribution
+        const syncRadius = 2;  // 5x5 grid = 25 chunks
+        for (let i = -syncRadius; i <= syncRadius; i++) {
+            for (let j = -syncRadius; j <= syncRadius; j++) {
+                const nx = cx + i;
+                const nz = czIdx + j;
+                const key = `${nx},${nz}`;
+
+                if (!this.chunks.has(key)) {
+                    const result = this.chunkGenerator.generateSync(nx, nz, this.group, this.isMobile);
+                    this.chunks.set(result.key, result.chunk);
+                }
+            }
+        }
+
+        // Queue remaining chunks for async generation
+        const rad = CONFIG.RENDER_DISTANCE;
+        for (let i = -rad; i <= rad; i++) {
+            for (let j = -rad; j <= rad; j++) {
+                const nx = cx + i;
+                const nz = czIdx + j;
+                const key = `${nx},${nz}`;
+
+                // Skip already-generated center grid
+                if (Math.abs(i) <= syncRadius && Math.abs(j) <= syncRadius) continue;
+
+                if (!this.chunks.has(key)) {
+                    this.chunkGenerator.request(nx, nz);
+                }
+            }
+        }
+
+        // Update tracking for throttle logic
+        this.lastUpdateX = playerX;
+        this.lastUpdateZ = playerZ;
+    }
+
     update(playerX: number, playerZ: number) {
         // Optimization: Only try to update chunks if player moved significantly
         const dist = Math.abs(playerX - this.lastUpdateX) + Math.abs(playerZ - this.lastUpdateZ);
@@ -246,8 +310,11 @@ export class World {
         this.lastUpdateZ = playerZ;
 
         const cz = CONFIG.CHUNK_SIZE;
-        const cx = Math.round(playerX / cz);
-        const czIdx = Math.round(playerZ / cz);
+        const cx = Math.floor(playerX / cz);
+        const czIdx = Math.floor(playerZ / cz);
+
+        // Update player position for priority queue
+        this.chunkGenerator.updatePlayerPosition(cx, czIdx);
 
         const activeKeys = new Set<string>();
         const rad = CONFIG.RENDER_DISTANCE;
@@ -266,17 +333,30 @@ export class World {
             }
         }
 
-        // Process one chunk per frame
-        this.chunkGenerator.generateNext(this.group, this.isMobile).then(result => {
-            if (result) {
-                this.chunks.set(result.key, result.chunk);
-            }
-        });
+        // Process 2 chunks per frame on desktop, 1 on mobile
+        const chunksPerFrame = this.isMobile ? 1 : 2;
+        for (let i = 0; i < chunksPerFrame; i++) {
+            this.chunkGenerator.generateNext(this.group, this.isMobile).then(result => {
+                if (result) {
+                    this.chunks.set(result.key, result.chunk);
+                }
+            }).catch(err => {
+                console.error('Chunk generation failed:', err);
+            });
+        }
 
+        // Dispose chunks with grace period
+        const gracePeriod = 1;  // Keep 1 chunk beyond render distance
         for (const [key, chunk] of this.chunks) {
             if (!activeKeys.has(key)) {
-                chunk.dispose(this.group);
-                this.chunks.delete(key);
+                // Calculate distance from player chunk
+                const dist = Math.abs(chunk.x - cx) + Math.abs(chunk.z - czIdx);
+
+                // Only dispose if beyond grace period
+                if (dist > rad + gracePeriod) {
+                    chunk.dispose(this.group);
+                    this.chunks.delete(key);
+                }
             }
         }
     }
