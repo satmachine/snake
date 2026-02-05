@@ -10,6 +10,9 @@ export class NetworkManager {
     private listeners: Map<string, EventCallback[]> = new Map();
     private lastInputSend: number = 0;
     private lastStateSend: number = 0;
+    private lastStateReceived: number = Date.now();
+    private connectionTimeout: number = 5000; // 5 seconds
+    private pingInterval: NodeJS.Timeout | null = null;
 
     playerId: PlayerId;
     roomCode: string = '';
@@ -65,7 +68,10 @@ export class NetworkManager {
             .on('broadcast', { event: 'lobby:start' }, (msg) => this.emit('lobby:start', msg.payload))
             .on('broadcast', { event: 'lobby:leave' }, (msg) => this.emit('lobby:leave', msg.payload))
             .on('broadcast', { event: 'input' }, (msg) => this.emit('input', msg.payload))
-            .on('broadcast', { event: 'state' }, (msg) => this.emit('state', msg.payload));
+            .on('broadcast', { event: 'state' }, (msg) => {
+                this.lastStateReceived = Date.now(); // Update last received time
+                this.emit('state', msg.payload);
+            });
 
         // Listen for presence events
         this.channel
@@ -88,6 +94,16 @@ export class NetworkManager {
                         playerId: this.playerId,
                         joinedAt: Date.now(),
                     });
+
+                    // Start ping monitoring
+                    this.pingInterval = setInterval(() => {
+                        const elapsed = Date.now() - this.lastStateReceived;
+                        if (elapsed > this.connectionTimeout && this.connected) {
+                            console.warn('Connection timeout detected');
+                            this.emit('connection:timeout', {});
+                        }
+                    }, 1000);
+
                     resolve();
                 }
             });
@@ -171,6 +187,10 @@ export class NetworkManager {
     // --- Cleanup ---
 
     async disconnect(): Promise<void> {
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
+        }
         if (this.channel) {
             await this.channel.untrack();
             supabase.removeChannel(this.channel);

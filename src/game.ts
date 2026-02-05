@@ -136,6 +136,7 @@ export class Game {
     nameLabelManager: NameLabelManager | null = null;
     countdownActive: boolean = false;
     countdownEndTime: number = 0;
+    private deathAnimations: Map<Snake, { startTime: number }> = new Map();
 
     constructor() {
         // Detect mobile devices
@@ -437,7 +438,7 @@ export class Game {
         this.appleManager.reset();
         this.burstSystem.reset();
 
-        this.world.update(this.snake.position.x, this.snake.position.z);
+        this.world.ensureInitialChunks(this.snake.position.x, this.snake.position.z);
 
         for (let i = 0; i < 5; i++) {
             const tree = this.world.getRandomTree();
@@ -588,7 +589,12 @@ export class Game {
         const obstacles = this.world.getObstacles();
         const alive = this.snake.update(dt, obstacles);
 
-        if (!alive) this.gameOver();
+        if (!alive) {
+            if (this.mode === 'singleplayer' || this.isHost) {
+                this.gameOver();
+            }
+            // Clients wait for authoritative death event from server
+        }
 
         const eatResults = this.appleManager.update(dt);
         for (const eat of eatResults) {
@@ -755,6 +761,12 @@ export class Game {
                     // Host path: apply directly
                     snake.applyNetState(snakeState);
                 }
+
+                // Re-enable snake if server says we're alive (override local prediction)
+                if (snakeState.alive && !snake.isAlive()) {
+                    snake.revive();
+                }
+
                 this.score = snakeState.score;
                 this.ui.updateScore(this.score);
             } else {
@@ -819,7 +831,8 @@ export class Game {
                 if (dsnake) {
                     this.audio.playCrash();
                     this.burstSystem.emit(dsnake.position, 30, 0xFF4081);
-                    dsnake.hide();
+                    // Animate death over 1 second instead of instant hide
+                    this.animateSnakeDeath(dsnake);
                 }
                 // Get player name for kill feed
                 const victimName = this.playerNames.get(event.playerId) || 'UNKNOWN';
@@ -855,6 +868,10 @@ export class Game {
         }
     }
 
+    private animateSnakeDeath(snake: Snake): void {
+        this.deathAnimations.set(snake, { startTime: Date.now() });
+    }
+
     updateVisuals(dt: number) {
         this.updateSeason(dt);
 
@@ -865,6 +882,34 @@ export class Game {
             }
         } else {
             this.snake.updateBodyVisuals();
+        }
+
+        // Show invulnerability countdown
+        if (this.snake.invulnerableTimer > 0) {
+            this.ui.showInvulnerabilityCountdown(this.snake.invulnerableTimer);
+        } else {
+            this.ui.showInvulnerabilityCountdown(0);
+        }
+
+        // Process death animations
+        for (const [snake, anim] of this.deathAnimations) {
+            const elapsed = (Date.now() - anim.startTime) / 1000;
+            if (elapsed < 1.0) {
+                // Fade out + sink into ground
+                snake.mesh.position.y -= 2.0 * dt; // Sink at 2 units/sec
+                const opacity = 1.0 - elapsed;
+                snake.mesh.traverse((obj) => {
+                    if (obj instanceof THREE.Mesh && obj.material) {
+                        const mat = obj.material as THREE.MeshStandardMaterial;
+                        mat.transparent = true;
+                        mat.opacity = opacity;
+                    }
+                });
+            } else {
+                // Animation complete, hide
+                snake.mesh.visible = false;
+                this.deathAnimations.delete(snake);
+            }
         }
 
         this.updateCamera(dt);
@@ -1269,6 +1314,35 @@ export class Game {
         this.ui.showHostDisconnected();
     }
 
+    private async attemptReconnect(): Promise<void> {
+        if (!this.networkManager || !this.lobbyManager) return;
+
+        const roomCode = this.networkManager.roomCode;
+        const wasHost = this.networkManager.isHost;
+
+        // Clean disconnect
+        await this.networkManager.disconnect();
+
+        // Wait 1 second
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Attempt rejoin
+        if (wasHost) {
+            this.ui.hideConnectionLost();
+            this.ui.showMessage('Cannot reconnect as host. Returning to menu.');
+            setTimeout(() => this.leaveMultiplayerRoom(), 2000);
+        } else {
+            const success = await this.networkManager.joinRoom(roomCode);
+            if (success) {
+                this.ui.hideConnectionLost();
+            } else {
+                this.ui.hideConnectionLost();
+                this.ui.showMessage('Reconnect failed. Returning to menu.');
+                setTimeout(() => this.leaveMultiplayerRoom(), 2000);
+            }
+        }
+    }
+
     // --- SPECTATOR METHODS ---
 
     enterSpectatorMode(): void {
@@ -1605,6 +1679,14 @@ export class Game {
                 }
             });
 
+            // Connection timeout handler
+            this.networkManager?.on('connection:timeout', () => {
+                if (this.mode === 'multiplayer' && this.state === GameState.PLAYING) {
+                    this.ui.showConnectionLost();
+                    this.attemptReconnect();
+                }
+            });
+
             // Create client predictor for local snake
             this.clientPredictor = new ClientPredictor(this.snake);
 
@@ -1618,7 +1700,7 @@ export class Game {
         this.appleManager.reset();
 
         // Update world around local snake
-        this.world.update(this.snake.position.x, this.snake.position.z);
+        this.world.ensureInitialChunks(this.snake.position.x, this.snake.position.z);
 
         // Spawn initial apples (host only)
         if (this.isHost) {

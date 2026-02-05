@@ -3,8 +3,12 @@ import type { InputPayload, SnakeNetState } from './protocol';
 
 // --- Client-Side Prediction ---
 
-const SNAP_THRESHOLD = 5.0;
 const CORRECTION_LERP = 0.3;
+
+function getSnapThreshold(speed: number): number {
+    // Scale threshold with speed: 5 units at rest, 30 units at max speed (200)
+    return Math.max(5.0, Math.min(30.0, speed * 0.15));
+}
 
 export class ClientPredictor {
     snake: Snake;
@@ -33,7 +37,8 @@ export class ClientPredictor {
         const dz = this.snake.position.z - serverState.z;
         const divergence = Math.sqrt(dx * dx + dz * dz);
 
-        if (divergence > SNAP_THRESHOLD) {
+        const threshold = getSnapThreshold(serverState.speed);
+        if (divergence > threshold) {
             // Hard snap
             this.snake.position.set(serverState.x, serverState.y, serverState.z);
             this.snake.angle = serverState.angle;
@@ -84,7 +89,7 @@ export class ClientPredictor {
 // --- Remote Snake Interpolation ---
 
 const INTERPOLATION_DELAY = 100; // ms behind real time
-const MAX_EXTRAPOLATION = 200;   // ms of dead reckoning
+const MAX_EXTRAPOLATION = 500;   // ms of dead reckoning (increased for better resilience)
 const BUFFER_SIZE = 20;
 
 interface BufferedState {
@@ -167,6 +172,7 @@ export class InterpolationBuffer {
         return {
             ...state,
             x: state.x + Math.cos(state.angle) * state.speed * dt,
+            y: state.y + state.vy * dt, // Add vertical motion prediction
             z: state.z + Math.sin(state.angle) * state.speed * dt,
         };
     }

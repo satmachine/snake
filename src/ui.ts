@@ -830,6 +830,98 @@ export class UI {
         this.spectatorEl.style.display = 'none';
     }
 
+    // --- INVULNERABILITY COUNTDOWN ---
+
+    showInvulnerabilityCountdown(timeRemaining: number): void {
+        let countdownEl = document.getElementById('invuln-countdown');
+        if (!countdownEl) {
+            const el = document.createElement('div');
+            el.id = 'invuln-countdown';
+            el.style.position = 'fixed';
+            el.style.top = '20%';
+            el.style.left = '50%';
+            el.style.transform = 'translateX(-50%)';
+            el.style.fontSize = '72px';
+            el.style.color = '#00E5FF';
+            el.style.fontWeight = 'bold';
+            el.style.textShadow = '0 0 20px #00E5FF';
+            el.style.zIndex = '100';
+            document.body.appendChild(el);
+            countdownEl = el;
+        }
+
+        const seconds = Math.ceil(timeRemaining);
+        countdownEl.textContent = seconds > 0 ? seconds.toString() : 'GO!';
+        countdownEl.style.display = timeRemaining > 0 ? 'block' : 'none';
+
+        if (timeRemaining <= 0) {
+            setTimeout(() => { countdownEl!.style.display = 'none'; }, 500);
+        }
+    }
+
+    // --- CONNECTION STATUS ---
+
+    showConnectionLost(): void {
+        let connectionEl = document.getElementById('connection-lost');
+        if (!connectionEl) {
+            const el = document.createElement('div');
+            el.id = 'connection-lost';
+            el.style.position = 'fixed';
+            el.style.top = '50%';
+            el.style.left = '50%';
+            el.style.transform = 'translate(-50%, -50%)';
+            el.style.fontSize = '32px';
+            el.style.color = '#FF4081';
+            el.style.fontWeight = 'bold';
+            el.style.textShadow = '0 0 20px #FF4081';
+            el.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+            el.style.padding = '20px 40px';
+            el.style.borderRadius = '10px';
+            el.style.zIndex = '1000';
+            el.textContent = 'Connection Lost - Reconnecting...';
+            document.body.appendChild(el);
+            connectionEl = el;
+        }
+        connectionEl.style.display = 'block';
+    }
+
+    hideConnectionLost(): void {
+        const connectionEl = document.getElementById('connection-lost');
+        if (connectionEl) {
+            connectionEl.style.display = 'none';
+        }
+    }
+
+    showMessage(message: string): void {
+        let messageEl = document.getElementById('message-overlay');
+        if (!messageEl) {
+            const el = document.createElement('div');
+            el.id = 'message-overlay';
+            el.style.position = 'fixed';
+            el.style.top = '50%';
+            el.style.left = '50%';
+            el.style.transform = 'translate(-50%, -50%)';
+            el.style.fontSize = '24px';
+            el.style.color = '#FFFFFF';
+            el.style.textShadow = '0 0 20px #000000';
+            el.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+            el.style.padding = '20px 40px';
+            el.style.borderRadius = '10px';
+            el.style.zIndex = '1000';
+            document.body.appendChild(el);
+            messageEl = el;
+        }
+        messageEl.textContent = message;
+        messageEl.style.display = 'block';
+    }
+
+    hideMessage(): void {
+        const messageEl = document.getElementById('message-overlay');
+        if (messageEl) {
+            messageEl.style.display = 'none';
+        }
+    }
+
     // --- KILL FEED ---
 
     addKillFeedEntry(message: string, color: string = '#FF4081'): void {
