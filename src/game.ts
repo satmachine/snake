@@ -131,6 +131,8 @@ export class Game {
     clientPredictor: ClientPredictor | null = null;
     remoteInterpolators: Map<PlayerId, InterpolationBuffer> = new Map();
     spectatingPlayerId: PlayerId | null = null;
+    hostPlayerId: PlayerId = '';
+    playerNames: Map<PlayerId, string> = new Map();
 
     constructor() {
         // Detect mobile devices
@@ -256,6 +258,9 @@ export class Game {
 
         this.ui.onSpectateNext = () => {
             this.spectateNextPlayer();
+        };
+        this.ui.onHostDisconnectReturn = () => {
+            this.leaveMultiplayerRoom();
         };
 
         this.loadLeaderboard();
@@ -800,12 +805,11 @@ export class Game {
                     dsnake.hide();
                 }
                 // Get player name for kill feed
-                const dplayers = this.lobbyManager?.getPlayerList() || [];
-                const victim = dplayers.find(p => p.id === event.playerId);
-                const victimName = victim?.name || 'UNKNOWN';
-                if (event.killerId) {
-                    const killer = dplayers.find(p => p.id === event.killerId);
-                    const killerName = killer?.name || 'UNKNOWN';
+                const victimName = this.playerNames.get(event.playerId) || 'UNKNOWN';
+                if (event.reason === 'disconnect') {
+                    this.ui.addKillFeedEntry(`${victimName} DISCONNECTED`, '#888888');
+                } else if (event.killerId) {
+                    const killerName = this.playerNames.get(event.killerId) || 'UNKNOWN';
                     this.ui.addKillFeedEntry(`${killerName} SEVERED ${victimName}`);
                 } else {
                     this.ui.addKillFeedEntry(`${victimName} SEVERED (${event.reason})`);
@@ -1195,6 +1199,16 @@ export class Game {
         this.scene.add(this.water);
     }
 
+    // --- DISCONNECT HANDLING ---
+
+    private handleHostDisconnected(): void {
+        this.state = GameState.GAME_OVER;
+        this.audio.stopMusic();
+        this.audio.stopWaterSound();
+        this.ui.hideSpectator();
+        this.ui.showHostDisconnected();
+    }
+
     // --- SPECTATOR METHODS ---
 
     enterSpectatorMode(): void {
@@ -1226,9 +1240,7 @@ export class Game {
         this.spectatingPlayerId = aliveIds[nextIdx];
 
         // Show spectator banner with player name
-        const players = this.lobbyManager?.getPlayerList() || [];
-        const player = players.find(p => p.id === this.spectatingPlayerId);
-        const name = player?.name || 'UNKNOWN';
+        const name = this.playerNames.get(this.spectatingPlayerId) || 'UNKNOWN';
         this.ui.showSpectator(name);
     }
 
@@ -1355,6 +1367,8 @@ export class Game {
         this.clientPredictor = null;
         this.remoteInterpolators.clear();
         this.spectatingPlayerId = null;
+        this.hostPlayerId = '';
+        this.playerNames.clear();
         if (this.lobbyManager) {
             this.lobbyManager.leaveRoom();
             this.lobbyManager.cleanup();
@@ -1428,6 +1442,15 @@ export class Game {
 
         // Create snakes for all players using addSnake helper
         const players = this.lobbyManager?.getPlayerList() || [];
+
+        // Populate hostPlayerId and playerNames for disconnect handling
+        const hostPlayer = players.find(p => p.isHost);
+        this.hostPlayerId = hostPlayer?.id || '';
+        this.playerNames.clear();
+        for (const p of players) {
+            this.playerNames.set(p.id, p.name);
+        }
+
         for (const pid of payload.playerOrder) {
             const spawn = payload.spawns[pid];
             const player = players.find(p => p.id === pid);
@@ -1471,6 +1494,17 @@ export class Game {
                     this.hostSimulation.receiveInput(input);
                 }
             });
+
+            // Host-side disconnect detection: remove player when their presence leaves
+            this.networkManager?.on('presence:leave', (data: any) => {
+                if (data.presences) {
+                    for (const p of data.presences) {
+                        if (p.playerId && p.playerId !== this.localPlayerId && this.hostSimulation) {
+                            this.hostSimulation.removePlayer(p.playerId);
+                        }
+                    }
+                }
+            });
         } else {
             // Client mode: AppleManager does not check eating (receives events from host)
             this.appleManager = new AppleManager(
@@ -1487,6 +1521,17 @@ export class Game {
             // Listen for state updates from host
             this.networkManager?.on('state', (payload: StatePayload) => {
                 this.handleStateUpdate(payload);
+            });
+
+            // Client-side disconnect detection: detect host leaving
+            this.networkManager?.on('presence:leave', (data: any) => {
+                if (data.presences) {
+                    for (const p of data.presences) {
+                        if (p.playerId && p.playerId === this.hostPlayerId) {
+                            this.handleHostDisconnected();
+                        }
+                    }
+                }
             });
 
             // Create client predictor for local snake

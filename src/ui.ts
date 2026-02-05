@@ -41,6 +41,7 @@ export class UI {
     onLobbyLeave: () => void = () => { };
     onMpPlayAgain: () => void = () => { };
     onSpectateNext: () => void = () => { };
+    onHostDisconnectReturn: () => void = () => { };
 
     currentAccentColor: string = '#00E5FF';
 
@@ -867,9 +868,18 @@ export class UI {
         setTimeout(() => {
             const btn = document.getElementById('mp-back-menu-btn');
             if (btn) {
+                btn.addEventListener('mouseenter', () => {
+                    btn.style.background = '#FF4081';
+                    btn.style.color = '#000';
+                    btn.style.boxShadow = '0 0 20px #FF4081';
+                });
+                btn.addEventListener('mouseleave', () => {
+                    btn.style.background = 'transparent';
+                    btn.style.color = '#FF4081';
+                    btn.style.boxShadow = 'none';
+                });
                 btn.addEventListener('click', () => {
-                    this.hideMpResults();
-                    this.showMenu();
+                    this.onHostDisconnectReturn();
                 });
             }
         }, 0);
