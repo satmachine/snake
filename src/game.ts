@@ -254,6 +254,10 @@ export class Game {
             }
         };
 
+        this.ui.onSpectateNext = () => {
+            this.spectateNextPlayer();
+        };
+
         this.loadLeaderboard();
 
         this.hemiLight = new THREE.HemisphereLight(this.visualPalette.colors.SKY_TOP, this.visualPalette.colors.GROUND_BASE, 0.4);
@@ -436,6 +440,13 @@ export class Game {
     }
 
     handleKey(e: KeyboardEvent, pressed: boolean) {
+        // TAB to cycle spectated player
+        if (this.state === GameState.SPECTATING && e.key === 'Tab' && pressed) {
+            e.preventDefault();
+            this.spectateNextPlayer();
+            return;
+        }
+
         if (this.state !== GameState.PLAYING) return;
         switch (e.key) {
             case 'ArrowLeft': case 'a': case 'A': this.keys.left = pressed; break;
@@ -498,9 +509,14 @@ export class Game {
         const dt = Math.min((time - this.lastTime) / 1000, 0.1);
         this.lastTime = time;
 
-        if (this.state === GameState.PLAYING) {
+        if (this.state === GameState.PLAYING || this.state === GameState.SPECTATING) {
             // Update physics once per frame with variable dt for maximum smoothness
-            this.updatePhysics(dt);
+            if (this.state === GameState.PLAYING) {
+                this.updatePhysics(dt);
+            } else {
+                // Spectating: still run multiplayer physics for remote state updates
+                this.updatePhysicsSpectating(dt);
+            }
             this.updateVisuals(dt);
 
             if (this.water) {
@@ -777,22 +793,30 @@ export class Game {
                 break;
             }
             case 'death': {
-                const snake = this.multiplayerSnakes.get(event.playerId);
-                if (snake) {
+                const dsnake = this.multiplayerSnakes.get(event.playerId);
+                if (dsnake) {
                     this.audio.playCrash();
-                    this.burstSystem.emit(snake.position, 30, 0xFF4081);
-                    snake.hide();
+                    this.burstSystem.emit(dsnake.position, 30, 0xFF4081);
+                    dsnake.hide();
                 }
                 // Get player name for kill feed
-                const players = this.lobbyManager?.getPlayerList() || [];
-                const victim = players.find(p => p.id === event.playerId);
+                const dplayers = this.lobbyManager?.getPlayerList() || [];
+                const victim = dplayers.find(p => p.id === event.playerId);
                 const victimName = victim?.name || 'UNKNOWN';
                 if (event.killerId) {
-                    const killer = players.find(p => p.id === event.killerId);
+                    const killer = dplayers.find(p => p.id === event.killerId);
                     const killerName = killer?.name || 'UNKNOWN';
                     this.ui.addKillFeedEntry(`${killerName} SEVERED ${victimName}`);
                 } else {
                     this.ui.addKillFeedEntry(`${victimName} SEVERED (${event.reason})`);
+                }
+                // Enter spectator mode if local player died in multiplayer
+                if (event.playerId === this.localPlayerId && this.mode === 'multiplayer') {
+                    this.enterSpectatorMode();
+                }
+                // If spectating the player who just died, switch to next
+                if (this.state === GameState.SPECTATING && this.spectatingPlayerId === event.playerId) {
+                    this.spectateNextPlayer();
                 }
                 break;
             }
@@ -822,8 +846,15 @@ export class Game {
         this.updateCamera(dt);
         this.dust.update(this.camera.position);
 
-        this.updateUnderwaterEffects();
-        this.ui.updateAir(this.snake.airTimer, CONFIG.MAX_AIR_TIME, this.snake.isUnderwater);
+        if (this.state === GameState.PLAYING) {
+            this.updateUnderwaterEffects();
+            this.ui.updateAir(this.snake.airTimer, CONFIG.MAX_AIR_TIME, this.snake.isUnderwater);
+        } else if (this.state === GameState.SPECTATING) {
+            // Hide underwater effects when spectating
+            this.underwaterOverlay.style.opacity = '0';
+            this.renderer.setClearColor(this._defaultClearColor, 1.0);
+            this.ui.updateAir(CONFIG.MAX_AIR_TIME, CONFIG.MAX_AIR_TIME, false);
+        }
 
         // Water trail and ripple effects when interacting with water
         if (this.snake.isUnderwater || this.snake.isSkimming) {
@@ -907,11 +938,20 @@ export class Game {
     }
 
     updateCamera(dt: number) {
-        if (!this.snake.bodyMeshes.length) return;
+        // Determine which snake the camera should follow
+        let targetSnake = this.snake;
+        if (this.state === GameState.SPECTATING && this.spectatingPlayerId) {
+            const spectated = this.multiplayerSnakes.get(this.spectatingPlayerId);
+            if (spectated && spectated.mesh.visible) {
+                targetSnake = spectated;
+            }
+        }
 
-        const head = this.snake.bodyMeshes[0];
-        const headPos = head.position; // Already interpolated in updateBodyVisuals
-        const snakeAngle = this.snake.angle;
+        if (!targetSnake.bodyMeshes.length) return;
+
+        const head = targetSnake.bodyMeshes[0];
+        const headPos = head.position;
+        const snakeAngle = targetSnake.angle;
 
         let diff = snakeAngle - this.cameraAngle;
         while (diff < -Math.PI) diff += Math.PI * 2;
@@ -922,7 +962,7 @@ export class Game {
         if (isNaN(this.cameraAngle)) this.cameraAngle = 0;
 
         // Dynamic camera distance based on speed vs base speed
-        const speedRatio = this.snake.actualSpeed / this.snake.targetBaseSpeed;
+        const speedRatio = targetSnake.actualSpeed / targetSnake.targetBaseSpeed;
         const fovMultiplier = Math.max(1.0, Math.min(1.4, speedRatio * 0.8));
 
         const dist = 28.0 * fovMultiplier;
@@ -1153,6 +1193,76 @@ export class Game {
         );
 
         this.scene.add(this.water);
+    }
+
+    // --- SPECTATOR METHODS ---
+
+    enterSpectatorMode(): void {
+        this.state = GameState.SPECTATING;
+        this.keys = { left: false, right: false, boost: false };
+        this.spectateNextPlayer();
+    }
+
+    spectateNextPlayer(): void {
+        // Find alive remote snakes
+        const aliveIds: PlayerId[] = [];
+        for (const [pid, s] of this.multiplayerSnakes) {
+            if (pid === this.localPlayerId) continue;
+            if (s.mesh.visible) {
+                aliveIds.push(pid);
+            }
+        }
+
+        if (aliveIds.length === 0) {
+            // No one to spectate
+            this.spectatingPlayerId = null;
+            this.ui.hideSpectator();
+            return;
+        }
+
+        // Cycle to next alive player
+        const currentIdx = this.spectatingPlayerId ? aliveIds.indexOf(this.spectatingPlayerId) : -1;
+        const nextIdx = (currentIdx + 1) % aliveIds.length;
+        this.spectatingPlayerId = aliveIds[nextIdx];
+
+        // Show spectator banner with player name
+        const players = this.lobbyManager?.getPlayerList() || [];
+        const player = players.find(p => p.id === this.spectatingPlayerId);
+        const name = player?.name || 'UNKNOWN';
+        this.ui.showSpectator(name);
+    }
+
+    private updatePhysicsSpectating(dt: number): void {
+        // While spectating, we still need to process remote state updates
+        // and keep the world rendering around the spectated player
+        const spectatedSnake = this.spectatingPlayerId
+            ? this.multiplayerSnakes.get(this.spectatingPlayerId)
+            : null;
+
+        if (spectatedSnake) {
+            this.world.update(spectatedSnake.position.x, spectatedSnake.position.z);
+            this.sunLight.position.x = spectatedSnake.position.x + 50;
+            this.sunLight.position.z = spectatedSnake.position.z + 50;
+        }
+
+        if (this.water) {
+            this.water.material.uniforms['sunDirection'].value.copy(this.sunLight.position).normalize();
+        }
+
+        // Tick remote interpolators (client only)
+        if (!this.isHost) {
+            const now = performance.now();
+            for (const [pid, interp] of this.remoteInterpolators) {
+                const snake = this.multiplayerSnakes.get(pid);
+                if (!snake || !snake.mesh.visible) continue;
+                const interpState = interp.getInterpolatedState(now);
+                if (interpState) {
+                    snake.applyNetState(interpState);
+                }
+            }
+        }
+
+        this.burstSystem.update(dt);
     }
 
     // --- MULTIPLAYER METHODS ---
