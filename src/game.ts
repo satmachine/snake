@@ -10,7 +10,9 @@ import { BurstSystem } from './particles';
 import { fetchLeaderboard, submitScore } from './supabase';
 import { NetworkManager } from './net/network';
 import { LobbyManager } from './net/lobby';
-import type { PlayerId, LobbyStartPayload } from './net/protocol';
+import { HostSimulation } from './net/host';
+import { ClientPredictor, InterpolationBuffer } from './net/client';
+import type { PlayerId, LobbyStartPayload, InputPayload, StatePayload, GameEvent } from './net/protocol';
 
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
@@ -118,11 +120,17 @@ export class Game {
 
     // Multiplayer
     mode: 'singleplayer' | 'multiplayer' = 'singleplayer';
+    isHost: boolean = false;
     networkManager: NetworkManager | null = null;
     lobbyManager: LobbyManager | null = null;
+    hostSimulation: HostSimulation | null = null;
     multiplayerSnakes: Map<PlayerId, Snake> = new Map();
     localPlayerId: PlayerId = '';
     pendingStartPayload: LobbyStartPayload | null = null;
+    private inputSeq: number = 0;
+    clientPredictor: ClientPredictor | null = null;
+    remoteInterpolators: Map<PlayerId, InterpolationBuffer> = new Map();
+    spectatingPlayerId: PlayerId | null = null;
 
     constructor() {
         // Detect mobile devices
@@ -218,6 +226,23 @@ export class Game {
         };
         this.ui.onMpPlayAgain = () => {
             this.ui.hideMpResults();
+            this.ui.hideSpectator();
+            this.ui.clearKillFeed();
+
+            // Reset multiplayer state
+            this.hostSimulation = null;
+            this.clientPredictor = null;
+            this.remoteInterpolators.clear();
+            this.spectatingPlayerId = null;
+
+            // Clean up remote snake meshes
+            for (const [pid, s] of this.multiplayerSnakes) {
+                if (pid !== this.localPlayerId) {
+                    s.mesh.parent?.remove(s.mesh);
+                }
+            }
+            this.multiplayerSnakes.clear();
+
             // Return to lobby if still connected, otherwise menu
             if (this.networkManager?.connected && this.lobbyManager) {
                 this.state = GameState.LOBBY;
@@ -285,7 +310,11 @@ export class Game {
             this.audio.playImpact();
         };
 
-        this.appleManager = new AppleManager(this.scene, this.snake);
+        this.appleManager = new AppleManager(
+            this.scene,
+            () => [{ id: 'local', position: this.snake.bodyMeshes[0].position }],
+            true
+        );
 
         this.appleManager.onEat = (pos: THREE.Vector3) => {
             this.audio.playEat();
@@ -495,6 +524,14 @@ export class Game {
     }
 
     updatePhysics(dt: number) {
+        if (this.mode === 'multiplayer') {
+            this.updatePhysicsMultiplayer(dt);
+        } else {
+            this.updatePhysicsSingleplayer(dt);
+        }
+    }
+
+    private updatePhysicsSingleplayer(dt: number) {
         this.dayTime += dt * 0.05;
         this.sunLight.position.x = this.snake.position.x + 50;
         this.sunLight.position.z = this.snake.position.z + 50;
@@ -508,7 +545,6 @@ export class Game {
             this.ep = Math.max(0, this.ep - CONFIG.EP_DRAIN_PER_SEC * dt);
         } else {
             this.snake.setBoosting(false);
-            // Regenerate EP ONLY when not holding the boost key and not stalled
             if (!this.keys.boost && !this.snake.isStalled) {
                 this.ep = Math.min(this.maxEp, this.ep + dt * 2.0);
             }
@@ -526,13 +562,14 @@ export class Game {
 
         if (!alive) this.gameOver();
 
-        const ate = this.appleManager.update(dt);
-        if (ate) {
+        const eatResults = this.appleManager.update(dt);
+        for (const eat of eatResults) {
             this.score += 10;
             this.ui.updateScore(this.score);
             this.ep = Math.min(this.maxEp, this.ep + CONFIG.EP_PER_APPLE);
             this.ui.updateEp(this.ep, this.maxEp);
 
+            this.snake.growPending += CONFIG.GROWTH_PER_APPLE;
             const newSpeed = Math.min(CONFIG.MAX_SPEED, this.snake.targetBaseSpeed + CONFIG.SPEED_INCREMENT_PER_APPLE);
             this.snake.setBaseSpeed(newSpeed);
         }
@@ -545,9 +582,243 @@ export class Game {
         this.burstSystem.update(dt);
     }
 
+    private updatePhysicsMultiplayer(dt: number) {
+        this.dayTime += dt * 0.05;
+        this.sunLight.position.x = this.snake.position.x + 50;
+        this.sunLight.position.z = this.snake.position.z + 50;
+
+        this.world.update(this.snake.position.x, this.snake.position.z);
+
+        if (this.water) {
+            this.water.material.uniforms['sunDirection'].value.copy(this.sunLight.position).normalize();
+        }
+
+        // Build local input from keys
+        const turn = ((this.keys.right ? 1 : 0) - (this.keys.left ? 1 : 0)) as -1 | 0 | 1;
+        const boost = this.keys.boost;
+        const localInput: InputPayload = {
+            playerId: this.localPlayerId,
+            seq: this.inputSeq++,
+            turn,
+            boost,
+        };
+
+        // Send local input over network
+        if (this.networkManager) {
+            this.networkManager.sendInput(localInput);
+        }
+
+        // Client-side prediction: apply input locally and predict physics
+        if (!this.isHost && this.clientPredictor) {
+            this.clientPredictor.addInput(localInput);
+            this.snake.setInput(turn, boost);
+            const obstacles = this.world.getObstacles();
+            this.clientPredictor.predict(dt, obstacles);
+        }
+
+        // Tick remote interpolators for non-host clients
+        if (!this.isHost) {
+            const now = performance.now();
+            for (const [pid, interp] of this.remoteInterpolators) {
+                if (pid === this.localPlayerId) continue;
+                const snake = this.multiplayerSnakes.get(pid);
+                if (!snake || !snake.mesh.visible) continue;
+                const interpState = interp.getInterpolatedState(now);
+                if (interpState) {
+                    snake.applyNetState(interpState);
+                }
+            }
+        }
+
+        if (this.isHost && this.hostSimulation) {
+            // Host: feed local input directly into simulation
+            this.hostSimulation.receiveInput(localInput);
+
+            // Run simulation
+            const obstacles = this.world.getObstacles();
+            this.hostSimulation.simulate(dt, obstacles);
+
+            // Apple eating
+            const eatResults = this.appleManager.update(dt);
+            for (const eat of eatResults) {
+                this.hostSimulation.handleEat(eat.playerId, eat.appleId, {
+                    x: eat.position.x,
+                    y: eat.position.y,
+                    z: eat.position.z,
+                });
+            }
+
+            // Apple spawning
+            if (this.appleManager.activeApples.length < CONFIG.MAX_APPLES && Math.random() < CONFIG.SPAWN_CHANCE) {
+                const tree = this.world.getRandomTree();
+                if (tree) {
+                    const appleId = this.appleManager.spawnApple(tree);
+                    if (appleId) {
+                        const apple = this.appleManager.getAppleById(appleId);
+                        if (apple) {
+                            this.hostSimulation.pendingEvents.push({
+                                type: 'apple_spawn',
+                                appleId,
+                                x: apple.mesh.position.x,
+                                y: apple.mesh.position.y,
+                                z: apple.mesh.position.z,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Check for game end
+            const gameEndEvent = this.hostSimulation.checkGameEnd();
+            if (gameEndEvent && gameEndEvent.type === 'game_over') {
+                // Fill in player names from lobby data
+                const lobbyPlayers = this.lobbyManager?.getPlayerList() || [];
+                for (const ranking of gameEndEvent.rankings) {
+                    const player = lobbyPlayers.find(p => p.id === ranking.playerId);
+                    ranking.name = player?.name || 'UNKNOWN';
+                }
+                this.hostSimulation.pendingEvents.push(gameEndEvent);
+            }
+
+            // Broadcast state at rate-limited interval
+            const statePayload = this.hostSimulation.getStatePayload();
+            this.networkManager?.sendState(statePayload);
+
+            // Update local EP bar from host simulation
+            const localEp = this.hostSimulation.getPlayerEp(this.localPlayerId);
+            if (localEp) {
+                this.ep = localEp.ep;
+                this.maxEp = localEp.maxEp;
+            }
+            this.ui.updateEp(this.ep, this.maxEp);
+
+            // Update local score
+            this.score = this.hostSimulation.getPlayerScore(this.localPlayerId);
+            this.ui.updateScore(this.score);
+        }
+        // Client physics are applied via handleStateUpdate when 'state' events arrive
+
+        this.burstSystem.update(dt);
+    }
+
+    private handleStateUpdate(payload: StatePayload): void {
+        const now = performance.now();
+
+        // Apply snake states
+        for (const snakeState of payload.snakes) {
+            const snake = this.multiplayerSnakes.get(snakeState.playerId);
+            if (!snake) continue;
+
+            if (snakeState.playerId === this.localPlayerId) {
+                // Use client predictor for smooth reconciliation (client only)
+                if (this.clientPredictor) {
+                    this.clientPredictor.reconcile(snakeState);
+                } else {
+                    // Host path: apply directly
+                    snake.applyNetState(snakeState);
+                }
+                this.score = snakeState.score;
+                this.ui.updateScore(this.score);
+            } else {
+                // Push to interpolation buffer for remote snakes
+                const interp = this.remoteInterpolators.get(snakeState.playerId);
+                if (interp) {
+                    interp.pushState(snakeState, now);
+                } else {
+                    // Fallback: apply directly
+                    snake.applyNetState(snakeState);
+                }
+            }
+
+            // Handle death
+            if (!snakeState.alive) {
+                snake.hide();
+                if (snakeState.playerId === this.localPlayerId) {
+                    this.audio.playCrash();
+                    this.burstSystem.emit(snake.position, 30, 0xFF4081);
+                }
+            }
+        }
+
+        // Apply path keypoints for smoother remote rendering
+        if (payload.paths) {
+            for (const [pid, keypoints] of Object.entries(payload.paths)) {
+                if (pid === this.localPlayerId) continue;
+                const snake = this.multiplayerSnakes.get(pid);
+                if (snake) {
+                    snake.applyPathKeypoints(keypoints);
+                }
+            }
+        }
+
+        // Process game events
+        for (const event of payload.events) {
+            this.handleGameEvent(event);
+        }
+    }
+
+    private handleGameEvent(event: GameEvent): void {
+        switch (event.type) {
+            case 'eat': {
+                // Remove eaten apple visually
+                this.appleManager.removeAppleFromNet(event.appleId);
+                // Play eat sound + particles at position
+                const pos = new THREE.Vector3(event.position.x, event.position.y, event.position.z);
+                this.audio.playEat();
+                this.burstSystem.emit(pos, 15, this.visualPalette.colors.APPLE);
+                break;
+            }
+            case 'apple_spawn': {
+                this.appleManager.addAppleFromNet(event.appleId, event.x, event.y, event.z);
+                break;
+            }
+            case 'apple_despawn': {
+                this.appleManager.removeAppleFromNet(event.appleId);
+                break;
+            }
+            case 'death': {
+                const snake = this.multiplayerSnakes.get(event.playerId);
+                if (snake) {
+                    this.audio.playCrash();
+                    this.burstSystem.emit(snake.position, 30, 0xFF4081);
+                    snake.hide();
+                }
+                // Get player name for kill feed
+                const players = this.lobbyManager?.getPlayerList() || [];
+                const victim = players.find(p => p.id === event.playerId);
+                const victimName = victim?.name || 'UNKNOWN';
+                if (event.killerId) {
+                    const killer = players.find(p => p.id === event.killerId);
+                    const killerName = killer?.name || 'UNKNOWN';
+                    this.ui.addKillFeedEntry(`${killerName} SEVERED ${victimName}`);
+                } else {
+                    this.ui.addKillFeedEntry(`${victimName} SEVERED (${event.reason})`);
+                }
+                break;
+            }
+            case 'game_over': {
+                this.state = GameState.GAME_OVER;
+                this.audio.stopMusic();
+                this.audio.stopWaterSound();
+                this.ui.hideSpectator();
+                this.ui.showMpResults(event.rankings);
+                break;
+            }
+        }
+    }
+
     updateVisuals(dt: number) {
         this.updateSeason(dt);
-        this.snake.updateBodyVisuals();
+
+        // Update body visuals for all snakes in multiplayer, or just local in singleplayer
+        if (this.mode === 'multiplayer') {
+            for (const [, s] of this.multiplayerSnakes) {
+                s.updateBodyVisuals();
+            }
+        } else {
+            this.snake.updateBodyVisuals();
+        }
+
         this.updateCamera(dt);
         this.dust.update(this.camera.position);
 
@@ -599,23 +870,38 @@ export class Game {
             }
         }
 
-        // Boost visual effects - emit trail while boosting
+        // Boost visual effects for local snake
         if (this.snake.isBoosting) {
-            // Get direction vector
             this._tempVec3.set(
                 Math.cos(this.snake.angle),
                 0,
                 Math.sin(this.snake.angle)
             );
-            // Emit boost trail every frame (particles are short-lived)
-            // Reduce particle count on mobile
             if (!this.isMobile || Math.random() < 0.5) {
                 this.burstSystem.emitBoostTrail(
                     this.snake.position,
                     this._tempVec3,
                     this.snake.actualSpeed,
-                    this.lastTime / 1000 // time in seconds for spiral rotation
+                    this.lastTime / 1000
                 );
+            }
+        }
+
+        // Boost particles for remote snakes in multiplayer
+        if (this.mode === 'multiplayer') {
+            for (const [pid, s] of this.multiplayerSnakes) {
+                if (pid === this.localPlayerId) continue;
+                if (s.isBoosting) {
+                    this._tempVec3.set(Math.cos(s.angle), 0, Math.sin(s.angle));
+                    if (Math.random() < 0.3) {
+                        this.burstSystem.emitBoostTrail(
+                            s.position,
+                            this._tempVec3,
+                            s.actualSpeed,
+                            this.lastTime / 1000
+                        );
+                    }
+                }
             }
         }
     }
@@ -771,8 +1057,10 @@ export class Game {
         // Update Shared Materials
         updateAssetMaterials(palette);
 
-        // Update Snake
-        this.snake.updatePalette(palette);
+        // Update Snake (only in singleplayer — multiplayer uses fixed player colors)
+        if (this.mode === 'singleplayer') {
+            this.snake.updatePalette(palette);
+        }
 
         // Update Sky Shader
         if (this.skyMesh) {
@@ -869,8 +1157,38 @@ export class Game {
 
     // --- MULTIPLAYER METHODS ---
 
+    addSnake(playerId: PlayerId, x: number, z: number, angle: number, colorIndex: number): Snake {
+        const isLocal = playerId === this.localPlayerId;
+        const snake = isLocal ? this.snake : new Snake(this.scene);
+
+        snake.resetAt(x, z, angle, CONFIG.BASE_SNAKE_SPEED);
+        snake.setMultiplayerColor(colorIndex);
+        snake.isRemote = !isLocal;
+
+        if (!isLocal) {
+            // Minimal callbacks for remote snakes (visual effects only)
+            snake.onLand = (speed) => {
+                this.burstSystem.emit(snake.position, Math.floor(speed * 0.3), this.visualPalette.colors.GROUND_BASE);
+            };
+            snake.onBreak = (pos) => {
+                this.burstSystem.emitRockPieces(pos, 20);
+            };
+        }
+
+        this.multiplayerSnakes.set(playerId, snake);
+        return snake;
+    }
+
+    removeSnake(playerId: PlayerId): void {
+        const snake = this.multiplayerSnakes.get(playerId);
+        if (!snake) return;
+        snake.mesh.parent?.remove(snake.mesh);
+        this.multiplayerSnakes.delete(playerId);
+    }
+
     async createMultiplayerRoom(name: string) {
         this.mode = 'multiplayer';
+        this.isHost = true;
         this.networkManager = new NetworkManager();
         this.lobbyManager = new LobbyManager(this.networkManager);
         this.localPlayerId = this.networkManager.playerId;
@@ -894,6 +1212,7 @@ export class Game {
 
     async joinMultiplayerRoom(code: string, name: string) {
         this.mode = 'multiplayer';
+        this.isHost = false;
         this.networkManager = new NetworkManager();
         this.lobbyManager = new LobbyManager(this.networkManager);
         this.localPlayerId = this.networkManager.playerId;
@@ -922,6 +1241,10 @@ export class Game {
     }
 
     leaveMultiplayerRoom() {
+        this.hostSimulation = null;
+        this.clientPredictor = null;
+        this.remoteInterpolators.clear();
+        this.spectatingPlayerId = null;
         if (this.lobbyManager) {
             this.lobbyManager.leaveRoom();
             this.lobbyManager.cleanup();
@@ -931,10 +1254,29 @@ export class Game {
             this.networkManager.disconnect();
             this.networkManager = null;
         }
+        // Clean up remote snakes
+        for (const [pid, s] of this.multiplayerSnakes) {
+            if (pid !== this.localPlayerId) {
+                s.mesh.parent?.remove(s.mesh);
+            }
+        }
+        this.multiplayerSnakes.clear();
+        this.isHost = false;
         this.mode = 'singleplayer';
         this.state = GameState.MENU;
         this.ui.hideLobby();
         this.ui.showMenu();
+
+        // Reset AppleManager to single-player mode
+        this.appleManager = new AppleManager(
+            this.scene,
+            () => [{ id: 'local', position: this.snake.bodyMeshes[0].position }],
+            true
+        );
+        this.appleManager.onEat = (pos: THREE.Vector3) => {
+            this.audio.playEat();
+            this.burstSystem.emit(pos, 15, this.visualPalette.colors.APPLE);
+        };
     }
 
     startMultiplayerGame(payload: LobbyStartPayload) {
@@ -950,43 +1292,114 @@ export class Game {
         this.score = 0;
         this.ep = CONFIG.MAX_EP;
         this.dayTime = 0;
+        this.inputSeq = 0;
         this.keys = { left: false, right: false, boost: false };
 
         this.ui.updateScore(0);
         this.ui.updateEp(this.ep, this.maxEp);
 
         this.world.reset();
-        this.appleManager.reset();
         this.burstSystem.reset();
 
+        // Stop any water sounds from previous game
+        this.audio.stopWaterSound();
+
         // Clean up any existing multiplayer snakes
-        for (const [, s] of this.multiplayerSnakes) {
-            s.mesh.parent?.remove(s.mesh);
+        for (const [pid, s] of this.multiplayerSnakes) {
+            if (pid !== this.localPlayerId) {
+                s.mesh.parent?.remove(s.mesh);
+            }
         }
         this.multiplayerSnakes.clear();
+        this.hostSimulation = null;
+        this.clientPredictor = null;
+        this.remoteInterpolators.clear();
+        this.spectatingPlayerId = null;
 
-        // Create snakes for all players
+        // Create snakes for all players using addSnake helper
         const players = this.lobbyManager?.getPlayerList() || [];
         for (const pid of payload.playerOrder) {
             const spawn = payload.spawns[pid];
             const player = players.find(p => p.id === pid);
-            const snake = pid === this.localPlayerId ? this.snake : new Snake(this.scene);
+            const colorIndex = player?.colorIndex ?? 0;
+            this.addSnake(pid, spawn.x, spawn.z, spawn.angle, colorIndex);
+        }
 
-            snake.resetAt(spawn.x, spawn.z, spawn.angle, CONFIG.BASE_SNAKE_SPEED);
-            if (player) {
-                snake.setMultiplayerColor(player.colorIndex);
+        // Create AppleManager with multi-snake head provider
+        if (this.isHost) {
+            // Host mode: AppleManager checks all alive snakes for eating
+            this.appleManager = new AppleManager(
+                this.scene,
+                () => {
+                    const heads: Array<{ id: string; position: THREE.Vector3 }> = [];
+                    for (const [pid, s] of this.multiplayerSnakes) {
+                        if (s.bodyMeshes.length > 0 && s.mesh.visible) {
+                            heads.push({ id: pid, position: s.bodyMeshes[0].position });
+                        }
+                    }
+                    return heads;
+                },
+                true
+            );
+            this.appleManager.onEat = (pos: THREE.Vector3) => {
+                this.audio.playEat();
+                this.burstSystem.emit(pos, 15, this.visualPalette.colors.APPLE);
+            };
+
+            // Create HostSimulation and register all players
+            this.hostSimulation = new HostSimulation();
+            for (const pid of payload.playerOrder) {
+                const snake = this.multiplayerSnakes.get(pid)!;
+                const player = players.find(p => p.id === pid);
+                const colorIndex = player?.colorIndex ?? 0;
+                this.hostSimulation.addPlayer(pid, snake, colorIndex);
             }
 
-            this.multiplayerSnakes.set(pid, snake);
+            // Listen for remote inputs
+            this.networkManager?.on('input', (input: InputPayload) => {
+                if (input.playerId !== this.localPlayerId && this.hostSimulation) {
+                    this.hostSimulation.receiveInput(input);
+                }
+            });
+        } else {
+            // Client mode: AppleManager does not check eating (receives events from host)
+            this.appleManager = new AppleManager(
+                this.scene,
+                () => {
+                    if (this.snake.bodyMeshes.length > 0) {
+                        return [{ id: this.localPlayerId, position: this.snake.bodyMeshes[0].position }];
+                    }
+                    return [];
+                },
+                false
+            );
+
+            // Listen for state updates from host
+            this.networkManager?.on('state', (payload: StatePayload) => {
+                this.handleStateUpdate(payload);
+            });
+
+            // Create client predictor for local snake
+            this.clientPredictor = new ClientPredictor(this.snake);
+
+            // Create interpolation buffers for remote snakes
+            for (const pid of payload.playerOrder) {
+                if (pid !== this.localPlayerId) {
+                    this.remoteInterpolators.set(pid, new InterpolationBuffer());
+                }
+            }
         }
+        this.appleManager.reset();
 
         // Update world around local snake
         this.world.update(this.snake.position.x, this.snake.position.z);
 
-        // Spawn initial apples
-        for (let i = 0; i < 5; i++) {
-            const tree = this.world.getRandomTree();
-            if (tree) this.appleManager.spawnApple(tree);
+        // Spawn initial apples (host only)
+        if (this.isHost) {
+            for (let i = 0; i < 5; i++) {
+                const tree = this.world.getRandomTree();
+                if (tree) this.appleManager.spawnApple(tree);
+            }
         }
 
         // Camera setup
