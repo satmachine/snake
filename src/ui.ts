@@ -885,3 +885,98 @@ export class UI {
         }, 0);
     }
 }
+
+// --- NAME LABEL MANAGER ---
+
+export interface NameLabelEntry {
+    playerId: string;
+    screenX: number;
+    screenY: number;
+    visible: boolean;
+    distance: number;
+}
+
+export class NameLabelManager {
+    private container: HTMLDivElement;
+    private labels: Map<string, HTMLDivElement> = new Map();
+
+    constructor() {
+        this.container = document.createElement('div');
+        this.container.style.position = 'fixed';
+        this.container.style.top = '0';
+        this.container.style.left = '0';
+        this.container.style.width = '100%';
+        this.container.style.height = '100%';
+        this.container.style.pointerEvents = 'none';
+        this.container.style.zIndex = '11';
+        document.body.appendChild(this.container);
+    }
+
+    addLabel(playerId: string, name: string, colorHex: string): void {
+        const el = document.createElement('div');
+        el.textContent = name;
+        el.style.position = 'absolute';
+        el.style.fontSize = '14px';
+        el.style.fontFamily = '"Courier New", Courier, monospace';
+        el.style.textTransform = 'uppercase';
+        el.style.letterSpacing = '2px';
+        el.style.color = colorHex;
+        el.style.textShadow = `0 0 8px ${colorHex}, 0 1px 3px rgba(0,0,0,0.8)`;
+        el.style.whiteSpace = 'nowrap';
+        el.style.transform = 'translate(-50%, -100%)';
+        el.style.display = 'none';
+        this.container.appendChild(el);
+        this.labels.set(playerId, el);
+    }
+
+    removeLabel(playerId: string): void {
+        const el = this.labels.get(playerId);
+        if (el) {
+            el.remove();
+            this.labels.delete(playerId);
+        }
+    }
+
+    update(entries: NameLabelEntry[]): void {
+        // Hide all labels first
+        for (const [, el] of this.labels) {
+            el.style.display = 'none';
+        }
+
+        for (const entry of entries) {
+            const el = this.labels.get(entry.playerId);
+            if (!el) continue;
+
+            if (!entry.visible) continue;
+
+            // Fade at distance > 100 units
+            const opacity = entry.distance > 100 ? Math.max(0, 1 - (entry.distance - 100) / 50) : 1;
+            if (opacity <= 0) continue;
+
+            el.style.display = 'block';
+            el.style.left = `${entry.screenX}px`;
+            el.style.top = `${entry.screenY}px`;
+            el.style.opacity = opacity.toString();
+        }
+    }
+
+    clear(): void {
+        for (const [, el] of this.labels) {
+            el.remove();
+        }
+        this.labels.clear();
+    }
+
+    hide(): void {
+        this.container.style.display = 'none';
+    }
+
+    show(): void {
+        this.container.style.display = 'block';
+    }
+
+    destroy(): void {
+        this.clear();
+        this.container.remove();
+    }
+}

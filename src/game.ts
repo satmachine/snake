@@ -1,9 +1,9 @@
 
 import * as THREE from 'three';
-import { CONFIG, GameState, PALETTE_SPRING, PALETTE_SUMMER, PALETTE_AUTUMN, PALETTE_WINTER, Palette } from './definitions';
+import { CONFIG, GameState, PALETTE_SPRING, PALETTE_SUMMER, PALETTE_AUTUMN, PALETTE_WINTER, Palette, MULTIPLAYER_COLORS } from './definitions';
 import { Snake, AppleManager, updateAssetMaterials } from './entities';
 import { World } from './world';
-import { UI } from './ui';
+import { UI, NameLabelManager } from './ui';
 import { AudioManager } from './audio';
 import { getTerrainHeight, clearTerrainCache, seedTerrain } from './utils';
 import { BurstSystem } from './particles';
@@ -133,6 +133,7 @@ export class Game {
     spectatingPlayerId: PlayerId | null = null;
     hostPlayerId: PlayerId = '';
     playerNames: Map<PlayerId, string> = new Map();
+    nameLabelManager: NameLabelManager | null = null;
 
     constructor() {
         // Detect mobile devices
@@ -236,6 +237,8 @@ export class Game {
             this.clientPredictor = null;
             this.remoteInterpolators.clear();
             this.spectatingPlayerId = null;
+            this.nameLabelManager?.destroy();
+            this.nameLabelManager = null;
 
             // Clean up remote snake meshes
             for (const [pid, s] of this.multiplayerSnakes) {
@@ -814,6 +817,8 @@ export class Game {
                 } else {
                     this.ui.addKillFeedEntry(`${victimName} SEVERED (${event.reason})`);
                 }
+                // Remove name label for dead player
+                this.nameLabelManager?.removeLabel(event.playerId);
                 // Enter spectator mode if local player died in multiplayer
                 if (event.playerId === this.localPlayerId && this.mode === 'multiplayer') {
                     this.enterSpectatorMode();
@@ -829,6 +834,7 @@ export class Game {
                 this.audio.stopMusic();
                 this.audio.stopWaterSound();
                 this.ui.hideSpectator();
+                this.nameLabelManager?.hide();
                 this.ui.showMpResults(event.rankings);
                 break;
             }
@@ -937,6 +943,45 @@ export class Game {
                         );
                     }
                 }
+            }
+
+            // Update name labels
+            if (this.nameLabelManager) {
+                const entries: Array<{ playerId: string; screenX: number; screenY: number; visible: boolean; distance: number }> = [];
+                const halfW = window.innerWidth / 2;
+                const halfH = window.innerHeight / 2;
+
+                for (const [pid, s] of this.multiplayerSnakes) {
+                    if (!s.mesh.visible || s.bodyMeshes.length === 0) {
+                        entries.push({ playerId: pid, screenX: 0, screenY: 0, visible: false, distance: 0 });
+                        continue;
+                    }
+
+                    // Project head position (+3Y offset) to screen
+                    this._tempVec3.copy(s.bodyMeshes[0].position);
+                    this._tempVec3.y += 3;
+                    this._tempVec3.project(this.camera);
+
+                    // Behind camera check
+                    if (this._tempVec3.z > 1) {
+                        entries.push({ playerId: pid, screenX: 0, screenY: 0, visible: false, distance: 0 });
+                        continue;
+                    }
+
+                    const screenX = (this._tempVec3.x * halfW) + halfW;
+                    const screenY = -(this._tempVec3.y * halfH) + halfH;
+                    const distance = this.camera.position.distanceTo(s.bodyMeshes[0].position);
+
+                    entries.push({
+                        playerId: pid,
+                        screenX,
+                        screenY,
+                        visible: true,
+                        distance,
+                    });
+                }
+
+                this.nameLabelManager.update(entries);
             }
         }
     }
@@ -1206,6 +1251,7 @@ export class Game {
         this.audio.stopMusic();
         this.audio.stopWaterSound();
         this.ui.hideSpectator();
+        this.nameLabelManager?.hide();
         this.ui.showHostDisconnected();
     }
 
@@ -1369,6 +1415,8 @@ export class Game {
         this.spectatingPlayerId = null;
         this.hostPlayerId = '';
         this.playerNames.clear();
+        this.nameLabelManager?.destroy();
+        this.nameLabelManager = null;
         if (this.lobbyManager) {
             this.lobbyManager.leaveRoom();
             this.lobbyManager.cleanup();
@@ -1456,6 +1504,15 @@ export class Game {
             const player = players.find(p => p.id === pid);
             const colorIndex = player?.colorIndex ?? 0;
             this.addSnake(pid, spawn.x, spawn.z, spawn.angle, colorIndex);
+        }
+
+        // Create name labels for all players
+        this.nameLabelManager?.destroy();
+        this.nameLabelManager = new NameLabelManager();
+        for (const p of players) {
+            const color = MULTIPLAYER_COLORS[p.colorIndex] || MULTIPLAYER_COLORS[0];
+            const colorHex = '#' + new THREE.Color(color.head).getHexString();
+            this.nameLabelManager.addLabel(p.id, p.name, colorHex);
         }
 
         // Create AppleManager with multi-snake head provider
