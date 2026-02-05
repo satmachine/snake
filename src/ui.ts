@@ -1,7 +1,8 @@
 
 import * as THREE from 'three';
-import { CONFIG } from './definitions';
+import { CONFIG, MULTIPLAYER_COLORS } from './definitions';
 import { LeaderboardEntry } from './supabase';
+import type { PlayerInfo, RankingEntry } from './net/protocol';
 
 export class UI {
     score: number = 0;
@@ -20,9 +21,28 @@ export class UI {
     submitBtnEl!: HTMLButtonElement;
     submitContainerEl!: HTMLDivElement;
 
+    // Multiplayer UI elements
+    lobbyEl!: HTMLDivElement;
+    lobbyPlayerListEl!: HTMLDivElement;
+    lobbyCodeEl!: HTMLDivElement;
+    lobbyStartBtnEl!: HTMLButtonElement;
+    spectatorEl!: HTMLDivElement;
+    killFeedEl!: HTMLDivElement;
+    mpResultsEl!: HTMLDivElement;
+    countdownEl!: HTMLDivElement;
+
     onStartClick: () => void = () => { };
     onRestartClick: () => void = () => { };
     onScoreSubmit: (name: string) => void = () => { };
+
+    // Multiplayer callbacks
+    onCreateGame: (name: string) => void = () => { };
+    onJoinGame: (code: string, name: string) => void = () => { };
+    onLobbyStart: () => void = () => { };
+    onLobbyLeave: () => void = () => { };
+    onMpPlayAgain: () => void = () => { };
+    onSpectateNext: () => void = () => { };
+    onHostDisconnectReturn: () => void = () => { };
 
     currentAccentColor: string = '#00E5FF';
 
@@ -183,6 +203,69 @@ export class UI {
             transition: all 0.2s;
             font-family: inherit;
         ">INITIALIZE</button>
+        <div style="margin-top: 20px; display: flex; gap: 15px; justify-content: center;">
+            <button id="create-game-btn" style="
+                padding: 12px 30px;
+                font-size: 12px;
+                background: transparent;
+                color: #00E5FF;
+                border: 1px solid #00E5FF;
+                cursor: pointer;
+                letter-spacing: 3px;
+                transition: all 0.2s;
+                font-family: inherit;
+            ">CREATE GAME</button>
+            <button id="join-game-btn" style="
+                padding: 12px 30px;
+                font-size: 12px;
+                background: transparent;
+                color: #00E5FF;
+                border: 1px solid #00E5FF;
+                cursor: pointer;
+                letter-spacing: 3px;
+                transition: all 0.2s;
+                font-family: inherit;
+            ">JOIN GAME</button>
+        </div>
+        <div id="join-input-container" style="margin-top: 15px; display: none;">
+            <input id="room-code-input" type="text" maxlength="4" placeholder="CODE" style="
+                width: 80px;
+                padding: 8px 12px;
+                font-size: 18px;
+                background: transparent;
+                border: 1px solid rgba(255,255,255,0.3);
+                color: white;
+                text-align: center;
+                letter-spacing: 4px;
+                font-family: inherit;
+                text-transform: uppercase;
+                margin-right: 10px;
+            " />
+            <button id="join-confirm-btn" style="
+                padding: 8px 20px;
+                font-size: 12px;
+                background: transparent;
+                color: #00E5FF;
+                border: 1px solid #00E5FF;
+                cursor: pointer;
+                letter-spacing: 2px;
+                font-family: inherit;
+            ">JOIN</button>
+        </div>
+        <div id="mp-name-container" style="margin-top: 15px; display: none;">
+            <input id="mp-name-input" type="text" maxlength="10" placeholder="YOUR NAME" style="
+                width: 120px;
+                padding: 8px 12px;
+                font-size: 14px;
+                background: transparent;
+                border: 1px solid rgba(255,255,255,0.3);
+                color: white;
+                text-align: center;
+                letter-spacing: 2px;
+                font-family: inherit;
+                text-transform: uppercase;
+            " />
+        </div>
         <div id="leaderboard-container" style="margin-top: 30px;"></div>
         <div style="margin-top: 30px; font-size: 10px; color: #666; letter-spacing: 1px;">
             [A/D / TOUCH SIDES] STEER &nbsp; &nbsp; [HOLD SPACE] BOOST &nbsp; &nbsp; [1-4] SEASONS
@@ -250,6 +333,128 @@ export class UI {
         this.nameInputEl = this.gameOverEl.querySelector('#name-input') as HTMLInputElement;
         this.submitBtnEl = this.gameOverEl.querySelector('#submit-btn') as HTMLButtonElement;
 
+        // --- LOBBY UI ---
+        this.lobbyEl = document.createElement('div');
+        style(this.lobbyEl, {
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            textAlign: 'center',
+            color: 'white',
+            zIndex: '25',
+            display: 'none',
+            fontFamily: '"Courier New", Courier, monospace',
+            userSelect: 'none',
+        });
+        this.lobbyEl.innerHTML = `
+            <h1 style="font-size: 40px; font-weight: 100; letter-spacing: 5px; margin-bottom: 10px;">LOBBY</h1>
+            <div id="lobby-code" style="font-size: 48px; letter-spacing: 10px; color: #00E5FF; margin-bottom: 20px; text-shadow: 0 0 20px rgba(0,229,255,0.5);"></div>
+            <div style="font-size: 10px; color: #888; letter-spacing: 2px; margin-bottom: 20px;">SHARE THIS CODE WITH FRIENDS</div>
+            <div id="lobby-player-list" style="margin-bottom: 30px;"></div>
+            <button id="lobby-start-btn" style="
+                padding: 15px 50px;
+                font-size: 14px;
+                background: transparent;
+                color: #00E5FF;
+                border: 1px solid #00E5FF;
+                cursor: pointer;
+                letter-spacing: 3px;
+                font-family: inherit;
+                display: none;
+            ">START GAME</button>
+            <button id="lobby-leave-btn" style="
+                padding: 10px 30px;
+                font-size: 12px;
+                background: transparent;
+                color: #FF4081;
+                border: 1px solid rgba(255,64,129,0.3);
+                cursor: pointer;
+                letter-spacing: 2px;
+                font-family: inherit;
+                margin-top: 15px;
+            ">LEAVE</button>
+        `;
+        this.container.appendChild(this.lobbyEl);
+        this.lobbyCodeEl = this.lobbyEl.querySelector('#lobby-code') as HTMLDivElement;
+        this.lobbyPlayerListEl = this.lobbyEl.querySelector('#lobby-player-list') as HTMLDivElement;
+        this.lobbyStartBtnEl = this.lobbyEl.querySelector('#lobby-start-btn') as HTMLButtonElement;
+
+        // --- SPECTATOR BANNER ---
+        this.spectatorEl = document.createElement('div');
+        style(this.spectatorEl, {
+            position: 'absolute',
+            top: '100px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            textAlign: 'center',
+            color: 'rgba(255,255,255,0.7)',
+            zIndex: '15',
+            display: 'none',
+            fontFamily: '"Courier New", Courier, monospace',
+            fontSize: '14px',
+            letterSpacing: '3px',
+            pointerEvents: 'none',
+        });
+        this.spectatorEl.innerHTML = `
+            <div>SPECTATING</div>
+            <div id="spectator-name" style="font-size: 20px; color: #00E5FF; margin-top: 5px;"></div>
+            <div style="font-size: 10px; color: #666; margin-top: 10px;">[TAB] NEXT PLAYER</div>
+        `;
+        this.container.appendChild(this.spectatorEl);
+
+        // --- KILL FEED ---
+        this.killFeedEl = document.createElement('div');
+        style(this.killFeedEl, {
+            position: 'absolute',
+            top: '20px',
+            right: '20px',
+            textAlign: 'right',
+            color: 'white',
+            zIndex: '12',
+            fontFamily: '"Courier New", Courier, monospace',
+            fontSize: '12px',
+            letterSpacing: '1px',
+            pointerEvents: 'none',
+        });
+        this.container.appendChild(this.killFeedEl);
+
+        // --- MULTIPLAYER RESULTS ---
+        this.mpResultsEl = document.createElement('div');
+        style(this.mpResultsEl, {
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            textAlign: 'center',
+            color: 'white',
+            zIndex: '30',
+            display: 'none',
+            fontFamily: '"Courier New", Courier, monospace',
+            userSelect: 'none',
+        });
+        this.container.appendChild(this.mpResultsEl);
+
+        // --- COUNTDOWN ---
+        this.countdownEl = document.createElement('div');
+        style(this.countdownEl, {
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            fontSize: '120px',
+            fontFamily: '"Courier New", Courier, monospace',
+            fontWeight: '100',
+            color: '#00E5FF',
+            textShadow: '0 0 40px rgba(0,229,255,0.8), 0 0 80px rgba(0,229,255,0.4)',
+            zIndex: '35',
+            display: 'none',
+            pointerEvents: 'none',
+            letterSpacing: '10px',
+            transition: 'transform 0.3s ease-out, opacity 0.3s ease',
+        });
+        this.container.appendChild(this.countdownEl);
+
         // Hover Effects
         const addHover = (btn: HTMLElement, color: string) => {
             btn.addEventListener('mouseenter', () => {
@@ -297,6 +502,73 @@ export class UI {
             if (nameInput) {
                 nameInput.addEventListener('input', () => {
                     nameInput.value = nameInput.value.toUpperCase();
+                });
+            }
+
+            // --- MULTIPLAYER BUTTON LISTENERS ---
+            const createGameBtn = document.getElementById('create-game-btn');
+            const joinGameBtn = document.getElementById('join-game-btn');
+            const joinInputContainer = document.getElementById('join-input-container');
+            const mpNameContainer = document.getElementById('mp-name-container');
+            const joinConfirmBtn = document.getElementById('join-confirm-btn');
+            const roomCodeInput = document.getElementById('room-code-input') as HTMLInputElement;
+            const mpNameInput = document.getElementById('mp-name-input') as HTMLInputElement;
+
+            if (createGameBtn) {
+                addHover(createGameBtn, '#00E5FF');
+                createGameBtn.addEventListener('click', () => {
+                    if (mpNameContainer) mpNameContainer.style.display = 'block';
+                    if (joinInputContainer) joinInputContainer.style.display = 'none';
+                    const name = mpNameInput?.value?.toUpperCase().trim() || 'HOST';
+                    this.onCreateGame(name);
+                });
+            }
+
+            if (joinGameBtn) {
+                addHover(joinGameBtn, '#00E5FF');
+                joinGameBtn.addEventListener('click', () => {
+                    if (joinInputContainer) joinInputContainer.style.display = 'block';
+                    if (mpNameContainer) mpNameContainer.style.display = 'block';
+                });
+            }
+
+            if (joinConfirmBtn) {
+                addHover(joinConfirmBtn, '#00E5FF');
+                joinConfirmBtn.addEventListener('click', () => {
+                    const code = roomCodeInput?.value?.toUpperCase().trim() || '';
+                    const name = mpNameInput?.value?.toUpperCase().trim() || 'PLAYER';
+                    if (code.length === 4) {
+                        this.onJoinGame(code, name);
+                    }
+                });
+            }
+
+            if (roomCodeInput) {
+                roomCodeInput.addEventListener('input', () => {
+                    roomCodeInput.value = roomCodeInput.value.toUpperCase();
+                });
+            }
+
+            if (mpNameInput) {
+                mpNameInput.addEventListener('input', () => {
+                    mpNameInput.value = mpNameInput.value.toUpperCase();
+                });
+            }
+
+            // Lobby buttons
+            const lobbyStartBtn = document.getElementById('lobby-start-btn');
+            if (lobbyStartBtn) {
+                addHover(lobbyStartBtn, '#00E5FF');
+                lobbyStartBtn.addEventListener('click', () => {
+                    this.onLobbyStart();
+                });
+            }
+
+            const lobbyLeaveBtn = document.getElementById('lobby-leave-btn');
+            if (lobbyLeaveBtn) {
+                addHover(lobbyLeaveBtn, '#FF4081');
+                lobbyLeaveBtn.addEventListener('click', () => {
+                    this.onLobbyLeave();
                 });
             }
         }, 0);
@@ -450,5 +722,337 @@ export class UI {
             this.submitBtnEl.disabled = submitting;
             this.submitBtnEl.innerText = submitting ? 'SUBMITTING...' : 'SUBMIT';
         }
+    }
+
+    // --- LOBBY UI ---
+
+    showLobby(roomCode: string, isHost: boolean): void {
+        this.menuEl.style.display = 'none';
+        this.lobbyEl.style.display = 'block';
+        this.lobbyCodeEl.innerText = roomCode;
+        this.lobbyStartBtnEl.style.display = isHost ? 'inline-block' : 'none';
+    }
+
+    hideLobby(): void {
+        this.lobbyEl.style.display = 'none';
+    }
+
+    updateLobbyPlayers(players: PlayerInfo[]): void {
+        let html = '';
+        for (const p of players) {
+            const color = MULTIPLAYER_COLORS[p.colorIndex] || MULTIPLAYER_COLORS[0];
+            const colorHex = '#' + new THREE.Color(color.head).getHexString();
+            const hostBadge = p.isHost ? ' <span style="color: #888;">[HOST]</span>' : '';
+            html += `<div style="
+                font-size: 18px;
+                padding: 6px 0;
+                letter-spacing: 3px;
+            "><span style="color: ${colorHex}; text-shadow: 0 0 10px ${colorHex};">&#9679;</span> ${p.name}${hostBadge}</div>`;
+        }
+        if (players.length < 2) {
+            html += `<div style="font-size: 12px; color: #666; margin-top: 10px; letter-spacing: 1px;">WAITING FOR PLAYERS...</div>`;
+        }
+        this.lobbyPlayerListEl.innerHTML = html;
+
+        // Enable start button only if 2+ players
+        this.lobbyStartBtnEl.disabled = players.length < 2;
+        if (players.length < 2) {
+            this.lobbyStartBtnEl.style.opacity = '0.3';
+        } else {
+            this.lobbyStartBtnEl.style.opacity = '1';
+        }
+    }
+
+    // --- COUNTDOWN ---
+
+    startCountdown(durationMs: number): void {
+        const steps = Math.floor(durationMs / 1000);
+        let step = 0;
+
+        const showNumber = (text: string) => {
+            this.countdownEl.textContent = text;
+            this.countdownEl.style.display = 'block';
+            this.countdownEl.style.opacity = '1';
+            this.countdownEl.style.transform = 'translate(-50%, -50%) scale(2)';
+
+            // Animate scale down
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    this.countdownEl.style.transform = 'translate(-50%, -50%) scale(1)';
+                });
+            });
+
+            // Fade after 700ms
+            setTimeout(() => {
+                this.countdownEl.style.opacity = '0.3';
+            }, 700);
+        };
+
+        // Show countdown numbers: 3, 2, 1
+        showNumber(String(steps - step));
+        step++;
+
+        const interval = setInterval(() => {
+            if (step < steps) {
+                showNumber(String(steps - step));
+                step++;
+            } else {
+                // Show GO!
+                this.countdownEl.textContent = 'GO!';
+                this.countdownEl.style.opacity = '1';
+                this.countdownEl.style.transform = 'translate(-50%, -50%) scale(2)';
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        this.countdownEl.style.transform = 'translate(-50%, -50%) scale(1)';
+                    });
+                });
+
+                // Hide after 500ms
+                setTimeout(() => {
+                    this.countdownEl.style.display = 'none';
+                    this.countdownEl.style.opacity = '1';
+                }, 500);
+
+                clearInterval(interval);
+            }
+        }, 1000);
+    }
+
+    // --- SPECTATOR UI ---
+
+    showSpectator(playerName: string): void {
+        this.spectatorEl.style.display = 'block';
+        const nameEl = this.spectatorEl.querySelector('#spectator-name');
+        if (nameEl) nameEl.textContent = playerName;
+    }
+
+    hideSpectator(): void {
+        this.spectatorEl.style.display = 'none';
+    }
+
+    // --- KILL FEED ---
+
+    addKillFeedEntry(message: string, color: string = '#FF4081'): void {
+        const entry = document.createElement('div');
+        entry.textContent = message;
+        entry.style.color = color;
+        entry.style.marginBottom = '4px';
+        entry.style.opacity = '1';
+        entry.style.transition = 'opacity 0.5s ease';
+        this.killFeedEl.appendChild(entry);
+
+        // Fade out and remove after 5 seconds
+        setTimeout(() => {
+            entry.style.opacity = '0';
+            setTimeout(() => entry.remove(), 500);
+        }, 5000);
+
+        // Keep max 5 entries
+        while (this.killFeedEl.children.length > 5) {
+            this.killFeedEl.removeChild(this.killFeedEl.firstChild!);
+        }
+    }
+
+    clearKillFeed(): void {
+        this.killFeedEl.innerHTML = '';
+    }
+
+    // --- MULTIPLAYER RESULTS ---
+
+    showMpResults(rankings: RankingEntry[]): void {
+        let html = `
+            <h1 style="font-size: 40px; font-weight: 100; letter-spacing: 5px; color: #00E5FF; margin-bottom: 30px;">GAME OVER</h1>
+            <div style="
+                background: rgba(0,0,0,0.2);
+                border: 1px solid rgba(255,255,255,0.2);
+                border-radius: 8px;
+                padding: 20px 40px;
+                margin-bottom: 30px;
+            ">
+        `;
+
+        for (const r of rankings) {
+            const medal = r.placement === 1 ? '&#9733; ' : '';
+            const glow = r.placement === 1 ? 'text-shadow: 0 0 20px rgba(0,229,255,0.5);' : '';
+            html += `<div style="
+                font-size: 20px;
+                padding: 6px 0;
+                letter-spacing: 3px;
+                ${glow}
+            ">${medal}#${r.placement} ${r.name.padEnd(10)} ${String(r.score).padStart(5)} ${r.kills > 0 ? '(' + r.kills + ' KILLS)' : ''}</div>`;
+        }
+
+        html += `</div>
+            <button id="mp-play-again-btn" style="
+                padding: 15px 50px;
+                font-size: 14px;
+                background: transparent;
+                color: #00E5FF;
+                border: 1px solid #00E5FF;
+                cursor: pointer;
+                letter-spacing: 3px;
+                font-family: inherit;
+            ">PLAY AGAIN</button>
+        `;
+
+        this.mpResultsEl.innerHTML = html;
+        this.mpResultsEl.style.display = 'block';
+
+        setTimeout(() => {
+            const playAgainBtn = document.getElementById('mp-play-again-btn');
+            if (playAgainBtn) {
+                playAgainBtn.addEventListener('mouseenter', () => {
+                    playAgainBtn.style.background = '#00E5FF';
+                    playAgainBtn.style.color = '#000';
+                    playAgainBtn.style.boxShadow = '0 0 20px #00E5FF';
+                });
+                playAgainBtn.addEventListener('mouseleave', () => {
+                    playAgainBtn.style.background = 'transparent';
+                    playAgainBtn.style.color = '#00E5FF';
+                    playAgainBtn.style.boxShadow = 'none';
+                });
+                playAgainBtn.addEventListener('click', () => {
+                    this.onMpPlayAgain();
+                });
+            }
+        }, 0);
+    }
+
+    hideMpResults(): void {
+        this.mpResultsEl.style.display = 'none';
+    }
+
+    // --- HOST DISCONNECTED ---
+
+    showHostDisconnected(): void {
+        this.mpResultsEl.innerHTML = `
+            <h1 style="font-size: 30px; font-weight: 100; letter-spacing: 5px; color: #FF4081; margin-bottom: 20px;">HOST DISCONNECTED</h1>
+            <p style="font-size: 14px; color: #888; margin-bottom: 30px; letter-spacing: 2px;">The game has ended.</p>
+            <button id="mp-back-menu-btn" style="
+                padding: 12px 40px;
+                font-size: 14px;
+                background: transparent;
+                color: #FF4081;
+                border: 1px solid #FF4081;
+                cursor: pointer;
+                letter-spacing: 3px;
+                font-family: inherit;
+            ">RETURN TO MENU</button>
+        `;
+        this.mpResultsEl.style.display = 'block';
+
+        setTimeout(() => {
+            const btn = document.getElementById('mp-back-menu-btn');
+            if (btn) {
+                btn.addEventListener('mouseenter', () => {
+                    btn.style.background = '#FF4081';
+                    btn.style.color = '#000';
+                    btn.style.boxShadow = '0 0 20px #FF4081';
+                });
+                btn.addEventListener('mouseleave', () => {
+                    btn.style.background = 'transparent';
+                    btn.style.color = '#FF4081';
+                    btn.style.boxShadow = 'none';
+                });
+                btn.addEventListener('click', () => {
+                    this.onHostDisconnectReturn();
+                });
+            }
+        }, 0);
+    }
+}
+
+// --- NAME LABEL MANAGER ---
+
+export interface NameLabelEntry {
+    playerId: string;
+    screenX: number;
+    screenY: number;
+    visible: boolean;
+    distance: number;
+}
+
+export class NameLabelManager {
+    private container: HTMLDivElement;
+    private labels: Map<string, HTMLDivElement> = new Map();
+
+    constructor() {
+        this.container = document.createElement('div');
+        this.container.style.position = 'fixed';
+        this.container.style.top = '0';
+        this.container.style.left = '0';
+        this.container.style.width = '100%';
+        this.container.style.height = '100%';
+        this.container.style.pointerEvents = 'none';
+        this.container.style.zIndex = '11';
+        document.body.appendChild(this.container);
+    }
+
+    addLabel(playerId: string, name: string, colorHex: string): void {
+        const el = document.createElement('div');
+        el.textContent = name;
+        el.style.position = 'absolute';
+        el.style.fontSize = '14px';
+        el.style.fontFamily = '"Courier New", Courier, monospace';
+        el.style.textTransform = 'uppercase';
+        el.style.letterSpacing = '2px';
+        el.style.color = colorHex;
+        el.style.textShadow = `0 0 8px ${colorHex}, 0 1px 3px rgba(0,0,0,0.8)`;
+        el.style.whiteSpace = 'nowrap';
+        el.style.transform = 'translate(-50%, -100%)';
+        el.style.display = 'none';
+        this.container.appendChild(el);
+        this.labels.set(playerId, el);
+    }
+
+    removeLabel(playerId: string): void {
+        const el = this.labels.get(playerId);
+        if (el) {
+            el.remove();
+            this.labels.delete(playerId);
+        }
+    }
+
+    update(entries: NameLabelEntry[]): void {
+        // Hide all labels first
+        for (const [, el] of this.labels) {
+            el.style.display = 'none';
+        }
+
+        for (const entry of entries) {
+            const el = this.labels.get(entry.playerId);
+            if (!el) continue;
+
+            if (!entry.visible) continue;
+
+            // Fade at distance > 100 units
+            const opacity = entry.distance > 100 ? Math.max(0, 1 - (entry.distance - 100) / 50) : 1;
+            if (opacity <= 0) continue;
+
+            el.style.display = 'block';
+            el.style.left = `${entry.screenX}px`;
+            el.style.top = `${entry.screenY}px`;
+            el.style.opacity = opacity.toString();
+        }
+    }
+
+    clear(): void {
+        for (const [, el] of this.labels) {
+            el.remove();
+        }
+        this.labels.clear();
+    }
+
+    hide(): void {
+        this.container.style.display = 'none';
+    }
+
+    show(): void {
+        this.container.style.display = 'block';
+    }
+
+    destroy(): void {
+        this.clear();
+        this.container.remove();
     }
 }

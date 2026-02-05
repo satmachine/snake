@@ -240,7 +240,22 @@ export const CONFIG = {
 export enum GameState {
   MENU,
   PLAYING,
-  GAME_OVER
+  GAME_OVER,
+  LOBBY,
+  SPECTATING
 }
+
+// Multiplayer constants
+export const NET_INPUT_RATE = 50;    // ms between input sends (~20 Hz)
+export const NET_STATE_RATE = 66;    // ms between state broadcasts (~15 Hz)
+export const MAX_PLAYERS = 4;
+
+// Distinct snake color palettes for multiplayer
+export const MULTIPLAYER_COLORS = [
+  { head: 0x00E5FF, body: 0xB2EBF2, emissive: 0x00E5FF, name: 'Cyan' },    // Player 1 - Cyan
+  { head: 0xFF4081, body: 0xF8BBD0, emissive: 0xFF4081, name: 'Pink' },    // Player 2 - Pink
+  { head: 0x76FF03, body: 0xCCFF90, emissive: 0x76FF03, name: 'Green' },   // Player 3 - Green
+  { head: 0xFFD740, body: 0xFFECB3, emissive: 0xFFD740, name: 'Gold' },    // Player 4 - Gold
+];
 
 export type Vector2 = { x: number; y: number };

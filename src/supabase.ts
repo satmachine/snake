@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 const SUPABASE_URL = 'https://wrlwpzxltkmuxaexnrym.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndybHdwenhsdGttdXhhZXhucnltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxMTMxNTUsImV4cCI6MjA4NTY4OTE1NX0.VlQuu1tfBcIMeBd2uZPTFIEsVmgUCuYqZlHTSi9DPLo';
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export interface LeaderboardEntry {
     id: string;

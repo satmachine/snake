@@ -25,6 +25,32 @@ const GRAD3 = [[1, 1, 0], [-1, 1, 0], [1, -1, 0], [-1, -1, 0],
 [1, 0, 1], [-1, 0, 1], [1, 0, -1], [-1, 0, -1],
 [0, 1, 1], [0, -1, 1], [0, 1, -1], [0, -1, -1]];
 
+// xorshift32 PRNG for deterministic terrain generation
+function xorshift32(state: { s: number }): number {
+    let x = state.s;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    state.s = x;
+    return (x >>> 0) / 4294967296; // normalize to [0, 1)
+}
+
+// Seed the PERM table for deterministic terrain across clients
+export function seedTerrain(seed: number) {
+    const state = { s: seed | 0 || 1 }; // Ensure non-zero integer
+    for (let i = 0; i < 256; i++) PERM[i] = i;
+    // Seeded Fisher-Yates shuffle
+    for (let i = 255; i > 0; i--) {
+        const j = Math.floor(xorshift32(state) * (i + 1));
+        const tmp = PERM[i];
+        PERM[i] = PERM[j];
+        PERM[j] = tmp;
+    }
+    for (let i = 0; i < 256; i++) PERM[i + 256] = PERM[i];
+    clearTerrainCache();
+}
+
+// Initialize with random seed on first load
 for (let i = 0; i < 256; i++) PERM[i] = i;
 for (let i = 0; i < 256; i++) {
     const j = Math.floor(Math.random() * 256);
