@@ -351,6 +351,7 @@ export class Game {
         canvas.addEventListener('touchstart', (e) => this.handleTouch(e), { passive: false });
         canvas.addEventListener('touchmove', (e) => this.handleTouch(e), { passive: false });
         canvas.addEventListener('touchend', (e) => this.handleTouch(e), { passive: false });
+        canvas.addEventListener('pointerdown', (e) => this.handleSpectatorPointer(e));
 
         this.renderer.setAnimationLoop((time) => this.animate(time));
     }
@@ -451,11 +452,22 @@ export class Game {
     }
 
     handleKey(e: KeyboardEvent, pressed: boolean) {
-        // TAB to cycle spectated player
-        if (this.state === GameState.SPECTATING && e.key === 'Tab' && pressed) {
-            e.preventDefault();
-            this.spectateNextPlayer();
-            return;
+        if (this.state === GameState.SPECTATING && pressed) {
+            switch (e.key) {
+                case 'Tab':
+                case 'ArrowRight':
+                case 'd':
+                case 'D':
+                    e.preventDefault();
+                    this.spectateNextPlayer(1);
+                    return;
+                case 'ArrowLeft':
+                case 'a':
+                case 'A':
+                    e.preventDefault();
+                    this.spectateNextPlayer(-1);
+                    return;
+            }
         }
 
         if (this.state !== GameState.PLAYING) return;
@@ -507,6 +519,17 @@ export class Game {
         // 2 Finger Boost Logic
         if (e.touches.length >= 2) {
             this.keys.boost = true;
+        }
+    }
+
+    private handleSpectatorPointer(e: PointerEvent): void {
+        if (this.state !== GameState.SPECTATING) return;
+
+        const halfWidth = window.innerWidth / 2;
+        if (e.clientX < halfWidth) {
+            this.spectateNextPlayer(-1);
+        } else {
+            this.spectateNextPlayer(1);
         }
     }
 
@@ -1351,7 +1374,7 @@ export class Game {
         this.spectateNextPlayer();
     }
 
-    spectateNextPlayer(): void {
+    spectateNextPlayer(direction: 1 | -1 = 1): void {
         // Find alive remote snakes
         const aliveIds: PlayerId[] = [];
         for (const [pid, s] of this.multiplayerSnakes) {
@@ -1370,7 +1393,7 @@ export class Game {
 
         // Cycle to next alive player
         const currentIdx = this.spectatingPlayerId ? aliveIds.indexOf(this.spectatingPlayerId) : -1;
-        const nextIdx = (currentIdx + 1) % aliveIds.length;
+        const nextIdx = (currentIdx + direction + aliveIds.length) % aliveIds.length;
         this.spectatingPlayerId = aliveIds[nextIdx];
 
         // Show spectator banner with player name
