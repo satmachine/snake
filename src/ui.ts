@@ -31,6 +31,13 @@ export class UI {
     mpResultsEl!: HTMLDivElement;
     countdownEl!: HTMLDivElement;
 
+    // Menu sub-screen elements
+    private menuHomeEl!: HTMLDivElement;
+    private menuNameEl!: HTMLDivElement;
+    private menuCodeEl!: HTMLDivElement;
+    private storedMpName: string = '';
+    private static readonly NAME_STORAGE_KEY = 'yume-snake-name';
+
     onStartClick: () => void = () => { };
     onRestartClick: () => void = () => { };
     onScoreSubmit: (name: string) => void = () => { };
@@ -178,99 +185,166 @@ export class UI {
             userSelect: 'none'
         });
 
-        // Updated text to include Touch controls
+        // Menu sub-screens: home, name entry, code entry
         this.menuEl.innerHTML = `
-        <h1 style="
-            margin: 0 0 20px 0;
-            font-size: 80px;
-            font-weight: 100;
-            letter-spacing: 10px;
-            color: #fff;
-            text-shadow: 0 0 30px rgba(255,255,255,0.5);
-        ">YUME SNAKE</h1>
-        <div style="font-size: 14px; color: #aaa; letter-spacing: 2px; margin-bottom: 30px; text-transform: uppercase;">
-            Drift . Explore . Ascend
+        <div id="menu-home">
+            <h1 style="
+                margin: 0 0 20px 0;
+                font-size: 80px;
+                font-weight: 100;
+                letter-spacing: 10px;
+                color: #fff;
+                text-shadow: 0 0 30px rgba(255,255,255,0.5);
+            ">YUME SNAKE</h1>
+            <div style="font-size: 14px; color: #aaa; letter-spacing: 2px; margin-bottom: 30px; text-transform: uppercase;">
+                Drift . Explore . Ascend
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 15px;">
+                <button id="start-btn" style="
+                    padding: 15px 60px;
+                    font-size: 16px;
+                    background: transparent;
+                    color: white;
+                    border: 1px solid rgba(255,255,255,0.3);
+                    border-radius: 0;
+                    cursor: pointer;
+                    letter-spacing: 4px;
+                    transition: all 0.2s;
+                    font-family: inherit;
+                ">SINGLE PLAYER</button>
+                <button id="multiplayer-btn" style="
+                    padding: 15px 60px;
+                    font-size: 16px;
+                    background: transparent;
+                    color: #00E5FF;
+                    border: 1px solid #00E5FF;
+                    border-radius: 0;
+                    cursor: pointer;
+                    letter-spacing: 4px;
+                    transition: all 0.2s;
+                    font-family: inherit;
+                ">MULTIPLAYER</button>
+            </div>
+            <div id="leaderboard-container" style="margin-top: 30px;"></div>
+            <div style="margin-top: 30px; font-size: 10px; color: #666; letter-spacing: 1px;">
+                [A/D / TOUCH SIDES] STEER &nbsp; &nbsp; [HOLD SPACE] BOOST &nbsp; &nbsp; [1-4] SEASONS
+            </div>
         </div>
-        <button id="start-btn" style="
-            padding: 15px 60px;
-            font-size: 16px;
-            background: transparent;
-            color: white;
-            border: 1px solid rgba(255,255,255,0.3);
-            border-radius: 0;
-            cursor: pointer;
-            letter-spacing: 4px;
-            transition: all 0.2s;
-            font-family: inherit;
-        ">INITIALIZE</button>
-        <div style="margin-top: 20px; display: flex; gap: 15px; justify-content: center;">
-            <button id="create-game-btn" style="
-                padding: 12px 30px;
-                font-size: 12px;
-                background: transparent;
+        <div id="menu-name" style="display: none;">
+            <h1 style="
+                margin: 0 0 15px 0;
+                font-size: 40px;
+                font-weight: 100;
+                letter-spacing: 5px;
                 color: #00E5FF;
-                border: 1px solid #00E5FF;
-                cursor: pointer;
-                letter-spacing: 3px;
-                transition: all 0.2s;
-                font-family: inherit;
-            ">CREATE GAME</button>
-            <button id="join-game-btn" style="
-                padding: 12px 30px;
-                font-size: 12px;
-                background: transparent;
-                color: #00E5FF;
-                border: 1px solid #00E5FF;
-                cursor: pointer;
-                letter-spacing: 3px;
-                transition: all 0.2s;
-                font-family: inherit;
-            ">JOIN GAME</button>
-        </div>
-        <div id="join-input-container" style="margin-top: 15px; display: none;">
-            <input id="room-code-input" type="text" maxlength="4" placeholder="CODE" style="
-                width: 80px;
-                padding: 8px 12px;
+                text-shadow: 0 0 20px rgba(0,229,255,0.5);
+            ">MULTIPLAYER</h1>
+            <div style="font-size: 12px; color: #aaa; letter-spacing: 2px; margin-bottom: 15px;">ENTER YOUR NAME</div>
+            <input id="mp-name-input" type="text" maxlength="10" placeholder="YOUR NAME" style="
+                width: 160px;
+                padding: 10px 15px;
                 font-size: 18px;
                 background: transparent;
                 border: 1px solid rgba(255,255,255,0.3);
                 color: white;
                 text-align: center;
-                letter-spacing: 4px;
+                letter-spacing: 3px;
                 font-family: inherit;
                 text-transform: uppercase;
-                margin-right: 10px;
+                margin-bottom: 25px;
             " />
-            <button id="join-confirm-btn" style="
-                padding: 8px 20px;
-                font-size: 12px;
-                background: transparent;
-                color: #00E5FF;
-                border: 1px solid #00E5FF;
-                cursor: pointer;
-                letter-spacing: 2px;
-                font-family: inherit;
-            ">JOIN</button>
+            <div style="display: flex; gap: 15px; justify-content: center;">
+                <button id="host-btn" style="
+                    padding: 15px 50px;
+                    font-size: 14px;
+                    background: transparent;
+                    color: #00E5FF;
+                    border: 1px solid #00E5FF;
+                    cursor: pointer;
+                    letter-spacing: 3px;
+                    transition: all 0.2s;
+                    font-family: inherit;
+                ">HOST</button>
+                <button id="join-btn" style="
+                    padding: 15px 50px;
+                    font-size: 14px;
+                    background: transparent;
+                    color: #00E5FF;
+                    border: 1px solid #00E5FF;
+                    cursor: pointer;
+                    letter-spacing: 3px;
+                    transition: all 0.2s;
+                    font-family: inherit;
+                ">JOIN</button>
+            </div>
+            <div style="margin-top: 25px;">
+                <button id="name-back-btn" style="
+                    padding: 10px 30px;
+                    font-size: 12px;
+                    background: transparent;
+                    color: #888;
+                    border: 1px solid rgba(255,255,255,0.15);
+                    cursor: pointer;
+                    letter-spacing: 2px;
+                    font-family: inherit;
+                    transition: all 0.2s;
+                ">BACK</button>
+            </div>
         </div>
-        <div id="mp-name-container" style="margin-top: 15px; display: none;">
-            <input id="mp-name-input" type="text" maxlength="10" placeholder="YOUR NAME" style="
-                width: 120px;
-                padding: 8px 12px;
-                font-size: 14px;
+        <div id="menu-code" style="display: none;">
+            <h1 style="
+                margin: 0 0 15px 0;
+                font-size: 40px;
+                font-weight: 100;
+                letter-spacing: 5px;
+                color: #00E5FF;
+                text-shadow: 0 0 20px rgba(0,229,255,0.5);
+            ">JOIN GAME</h1>
+            <div style="font-size: 12px; color: #aaa; letter-spacing: 2px; margin-bottom: 15px;">ENTER ROOM CODE</div>
+            <input id="room-code-input" type="text" maxlength="4" placeholder="CODE" style="
+                width: 100px;
+                padding: 10px 15px;
+                font-size: 24px;
                 background: transparent;
                 border: 1px solid rgba(255,255,255,0.3);
                 color: white;
                 text-align: center;
-                letter-spacing: 2px;
+                letter-spacing: 6px;
                 font-family: inherit;
                 text-transform: uppercase;
+                margin-bottom: 25px;
             " />
-        </div>
-        <div id="leaderboard-container" style="margin-top: 30px;"></div>
-        <div style="margin-top: 30px; font-size: 10px; color: #666; letter-spacing: 1px;">
-            [A/D / TOUCH SIDES] STEER &nbsp; &nbsp; [HOLD SPACE] BOOST &nbsp; &nbsp; [1-4] SEASONS
+            <div>
+                <button id="join-confirm-btn" style="
+                    padding: 15px 50px;
+                    font-size: 14px;
+                    background: transparent;
+                    color: #00E5FF;
+                    border: 1px solid #00E5FF;
+                    cursor: pointer;
+                    letter-spacing: 3px;
+                    transition: all 0.2s;
+                    font-family: inherit;
+                ">JOIN</button>
+            </div>
+            <div style="margin-top: 25px;">
+                <button id="code-back-btn" style="
+                    padding: 10px 30px;
+                    font-size: 12px;
+                    background: transparent;
+                    color: #888;
+                    border: 1px solid rgba(255,255,255,0.15);
+                    cursor: pointer;
+                    letter-spacing: 2px;
+                    font-family: inherit;
+                    transition: all 0.2s;
+                ">BACK</button>
+            </div>
         </div>
     `;
+        this.menuHomeEl = this.menuEl.querySelector('#menu-home') as HTMLDivElement;
+        this.menuNameEl = this.menuEl.querySelector('#menu-name') as HTMLDivElement;
+        this.menuCodeEl = this.menuEl.querySelector('#menu-code') as HTMLDivElement;
         this.leaderboardEl = this.menuEl.querySelector('#leaderboard-container') as HTMLDivElement;
         this.container.appendChild(this.menuEl);
 
@@ -325,7 +399,7 @@ export class UI {
             color: #FF4081;
             cursor: pointer;
             letter-spacing: 3px;
-        ">RECONNECT</button>
+        ">TRY AGAIN</button>
     `;
         this.container.appendChild(this.gameOverEl);
         this.finalScoreEl = this.gameOverEl.querySelector('#final-score') as HTMLSpanElement;
@@ -505,30 +579,44 @@ export class UI {
                 });
             }
 
-            // --- MULTIPLAYER BUTTON LISTENERS ---
-            const createGameBtn = document.getElementById('create-game-btn');
-            const joinGameBtn = document.getElementById('join-game-btn');
-            const joinInputContainer = document.getElementById('join-input-container');
-            const mpNameContainer = document.getElementById('mp-name-container');
+            // --- MULTIPLAYER MENU FLOW ---
+            const multiplayerBtn = document.getElementById('multiplayer-btn');
+            const hostBtn = document.getElementById('host-btn');
+            const joinBtn = document.getElementById('join-btn');
             const joinConfirmBtn = document.getElementById('join-confirm-btn');
             const roomCodeInput = document.getElementById('room-code-input') as HTMLInputElement;
             const mpNameInput = document.getElementById('mp-name-input') as HTMLInputElement;
+            const nameBackBtn = document.getElementById('name-back-btn');
+            const codeBackBtn = document.getElementById('code-back-btn');
 
-            if (createGameBtn) {
-                addHover(createGameBtn, '#00E5FF');
-                createGameBtn.addEventListener('click', () => {
-                    if (mpNameContainer) mpNameContainer.style.display = 'block';
-                    if (joinInputContainer) joinInputContainer.style.display = 'none';
+            if (multiplayerBtn) {
+                addHover(multiplayerBtn, '#00E5FF');
+                multiplayerBtn.addEventListener('click', () => {
+                    // Load saved name from localStorage
+                    const savedName = localStorage.getItem(UI.NAME_STORAGE_KEY) || '';
+                    if (mpNameInput) mpNameInput.value = savedName;
+                    this.showMenuSubScreen('name');
+                    setTimeout(() => mpNameInput?.focus(), 50);
+                });
+            }
+
+            if (hostBtn) {
+                addHover(hostBtn, '#00E5FF');
+                hostBtn.addEventListener('click', () => {
                     const name = mpNameInput?.value?.toUpperCase().trim() || 'HOST';
+                    localStorage.setItem(UI.NAME_STORAGE_KEY, name);
                     this.onCreateGame(name);
                 });
             }
 
-            if (joinGameBtn) {
-                addHover(joinGameBtn, '#00E5FF');
-                joinGameBtn.addEventListener('click', () => {
-                    if (joinInputContainer) joinInputContainer.style.display = 'block';
-                    if (mpNameContainer) mpNameContainer.style.display = 'block';
+            if (joinBtn) {
+                addHover(joinBtn, '#00E5FF');
+                joinBtn.addEventListener('click', () => {
+                    this.storedMpName = mpNameInput?.value?.toUpperCase().trim() || 'PLAYER';
+                    localStorage.setItem(UI.NAME_STORAGE_KEY, this.storedMpName);
+                    if (roomCodeInput) roomCodeInput.value = '';
+                    this.showMenuSubScreen('code');
+                    setTimeout(() => roomCodeInput?.focus(), 50);
                 });
             }
 
@@ -536,9 +624,8 @@ export class UI {
                 addHover(joinConfirmBtn, '#00E5FF');
                 joinConfirmBtn.addEventListener('click', () => {
                     const code = roomCodeInput?.value?.toUpperCase().trim() || '';
-                    const name = mpNameInput?.value?.toUpperCase().trim() || 'PLAYER';
                     if (code.length === 4) {
-                        this.onJoinGame(code, name);
+                        this.onJoinGame(code, this.storedMpName);
                     }
                 });
             }
@@ -552,6 +639,20 @@ export class UI {
             if (mpNameInput) {
                 mpNameInput.addEventListener('input', () => {
                     mpNameInput.value = mpNameInput.value.toUpperCase();
+                });
+            }
+
+            if (nameBackBtn) {
+                addHover(nameBackBtn, '#aaa');
+                nameBackBtn.addEventListener('click', () => {
+                    this.showMenuSubScreen('home');
+                });
+            }
+
+            if (codeBackBtn) {
+                addHover(codeBackBtn, '#aaa');
+                codeBackBtn.addEventListener('click', () => {
+                    this.showMenuSubScreen('name');
                 });
             }
 
@@ -621,11 +722,18 @@ export class UI {
     }
 
 
+    private showMenuSubScreen(screen: 'home' | 'name' | 'code'): void {
+        if (this.menuHomeEl) this.menuHomeEl.style.display = screen === 'home' ? 'block' : 'none';
+        if (this.menuNameEl) this.menuNameEl.style.display = screen === 'name' ? 'block' : 'none';
+        if (this.menuCodeEl) this.menuCodeEl.style.display = screen === 'code' ? 'block' : 'none';
+    }
+
     showMenu() {
         this.menuEl.style.display = 'block';
         this.gameOverEl.style.display = 'none';
         this.epContainerEl.style.display = 'none';
         this.scoreEl.style.display = 'none';
+        this.showMenuSubScreen('home');
     }
 
     hideMenu() {
