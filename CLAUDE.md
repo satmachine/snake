@@ -7,7 +7,7 @@ A 3D snake game built with Three.js and TypeScript.
 - `src/definitions.ts` - Game constants and configuration (CONFIG object)
 - `src/entities.ts` - Snake physics and entity logic
 - `src/supabase.ts` - Supabase client (leaderboard API + Realtime for multiplayer)
-- `src/ui.ts` - UI components (menu, lobby, game over, leaderboard, multiplayer results)
+- `src/ui.ts` - UI components (menu, lobby, game over, leaderboard, multiplayer results, name labels, countdown)
 - `src/game.ts` - Main game loop, state management, multiplayer orchestration
 - `src/net/protocol.ts` - Multiplayer network message types and payload interfaces
 - `src/net/network.ts` - NetworkManager: Supabase Realtime Broadcast/Presence wrapper
@@ -55,7 +55,7 @@ Public high score leaderboard using Supabase:
 - Rocks knock out snake unless boosting (breaks rocks)
 - Longer snake = faster base speed
 
-### Multiplayer (WIP — Phase 3 complete)
+### Multiplayer (WIP — Phase 4 complete)
 
 Online multiplayer (2-4 players) using Supabase Realtime Broadcast with host-client architecture. The lobby creator is the host; other players are clients who send inputs and receive state.
 
@@ -82,7 +82,7 @@ Online multiplayer (2-4 players) using Supabase Realtime Broadcast with host-cli
 **Lobby** (`src/net/lobby.ts`):
 - `LobbyManager` coordinates pre-game: player join/leave, color assignment, spawn generation
 - Host-authoritative: only host processes join/leave, broadcasts lobby state to all
-- `startGame()` generates terrain seed + spawn positions (safe terrain, 50+ units apart), sends `lobby:start`
+- `startGame()` generates terrain seed + spawn positions (safe terrain, 50+ units apart) + `countdownEndTime`, sends `lobby:start`
 - Presence-based disconnect detection removes players who close their tab
 
 **Protocol** (`src/net/protocol.ts`):
@@ -128,19 +128,35 @@ Online multiplayer (2-4 players) using Supabase Realtime Broadcast with host-cli
 - `updatePhysics` branches: `updatePhysicsSingleplayer` (unchanged) vs `updatePhysicsMultiplayer`
 - **Host loop**: reads local input → feeds to HostSimulation + sends via network; receives remote inputs via `'input'` listener; runs `hostSimulation.simulate(dt)`; handles apple eating/spawning; calls `checkGameEnd()` → broadcasts game_over with player names; rate-limited `sendState()`
 - **Client loop**: sends local input via network; runs `clientPredictor.predict()` locally each frame; on state arrival, `clientPredictor.reconcile()` corrects local snake, `InterpolationBuffer.pushState()` buffers remote states; tick interpolators each frame for smooth remote rendering
-- `handleGameEvent` death case: shows kill feed with killer name for PvP (`"KILLER SEVERED VICTIM"`) or reason for other deaths. Enters spectator mode if local player dies.
+- `handleGameEvent` death case: shows kill feed with killer name for PvP (`"KILLER SEVERED VICTIM"`), gray `"PLAYER DISCONNECTED"` for disconnect deaths, or reason for other deaths. Enters spectator mode if local player dies. Removes name label for dead player.
 - **Spectator mode**: `enterSpectatorMode()` transitions to `GameState.SPECTATING`; `spectateNextPlayer()` cycles alive remote snakes; TAB key bound during SPECTATING; camera follows spectated snake; `updatePhysicsSpectating()` keeps world/interpolation ticking
-- `updateVisuals` calls `updateBodyVisuals()` on ALL snakes in multiplayer; emits boost particles for remote snakes
+- `updateVisuals` calls `updateBodyVisuals()` on ALL snakes in multiplayer; emits boost particles for remote snakes; updates name label positions via 3D→screen projection
 - Season palette changes don't override multiplayer player colors
 - `GameState.LOBBY` renders orbiting camera while in lobby
+- `hostPlayerId: PlayerId` and `playerNames: Map<PlayerId, string>` — stable name lookups populated at game start, used by kill feed and spectator UI (avoids race condition with LobbyManager player removal)
+- `nameLabelManager: NameLabelManager | null` — creates/updates/destroys DOM name labels for multiplayer snakes
+- `countdownActive: boolean` + `countdownEndTime: number` — blocks physics and input during 3-second countdown after game start
+- **Disconnect handling**: host detects client disconnect via `presence:leave` → `hostSimulation.removePlayer(pid)`. Client detects host disconnect → `handleHostDisconnected()` shows overlay with RETURN TO MENU button.
 - Single-player flow is unaffected
 
 **Phase 2 Milestone**: Host runs authoritative simulation, clients receive and render state. Apples sync across tabs. Multiple snakes visible and moving.
 
 **Phase 3 Milestone**: PvP collision kills snakes on contact. Clients run local prediction and smooth reconciliation. Remote snakes interpolated 100ms behind. Dead players spectate alive ones with TAB cycling. Game ends when ≤1 alive, results screen shows placements/scores/kills.
 
-**Remaining Phases** (tracked on [Linear — Multi-Snake project](https://linear.app/iplus1/project/multi-snake-d9d7d3893af2)):
-- Phase 4: Disconnect handling, name labels, kill feed, countdown, performance testing
+**Phase 4 Milestone**: Disconnect handling for both host and client via Supabase Presence. Floating name labels above snake heads (DOM-based, 3D→screen projection, fade at distance). Kill feed with PvP/disconnect/environment messages. 3-2-1-GO countdown animation at game start with frozen physics. Host disconnect shows overlay with RETURN TO MENU.
+
+**Name Labels** (`src/ui.ts` — `NameLabelManager`):
+- DOM-based floating labels: one `<div>` per player, positioned via `Vector3.project(camera)`
+- Player color with glow text-shadow, 14px uppercase Courier New
+- Fade opacity at distance > 100 units (fully invisible at 150+)
+- Labels removed on player death, hidden on game_over, destroyed on room leave
+- `addLabel(playerId, name, colorHex)` / `removeLabel(playerId)` / `update(entries)` / `clear()` / `hide()` / `show()` / `destroy()`
+
+**Countdown** (`src/ui.ts` + `src/game.ts`):
+- `LobbyStartPayload.countdownEndTime` — timestamp sent to all clients (3.5s from host's `Date.now()`)
+- `ui.startCountdown(3000)` — animates "3" → "2" → "1" → "GO!" with scale-in effect
+- `game.countdownActive` / `game.countdownEndTime` — blocks physics and all input during countdown
+- World/camera/dayTime still update during countdown for visual continuity
 
 ## Development Workflow
 
