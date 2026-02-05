@@ -37,7 +37,8 @@ function xorshift32(state: { s: number }): number {
 
 // Seed the PERM table for deterministic terrain across clients
 export function seedTerrain(seed: number) {
-    const state = { s: seed | 0 || 1 }; // Ensure non-zero integer
+    terrainSeed = seed | 0 || 1;
+    const state = { s: terrainSeed }; // Ensure non-zero integer
     for (let i = 0; i < 256; i++) PERM[i] = i;
     // Seeded Fisher-Yates shuffle
     for (let i = 255; i > 0; i--) {
@@ -47,6 +48,7 @@ export function seedTerrain(seed: number) {
         PERM[j] = tmp;
     }
     for (let i = 0; i < 256; i++) PERM[i + 256] = PERM[i];
+    regenerateSecondaryIslands();
     clearTerrainCache();
 }
 
@@ -63,6 +65,60 @@ for (let i = 0; i < 256; i++) {
 function dot(g: number[], x: number, y: number) {
     return g[0] * x + g[1] * y;
 }
+
+interface SecondaryIsland {
+    x: number;
+    z: number;
+    radius: number;
+}
+
+let terrainSeed = 1;
+let secondaryIslands: SecondaryIsland[] = [];
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+    const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+}
+
+function regenerateSecondaryIslands() {
+    const state = { s: terrainSeed | 0 || 1 };
+    secondaryIslands = [];
+
+    for (let i = 0; i < CONFIG.ISLAND_SECONDARY_COUNT; i++) {
+        const angle = xorshift32(state) * Math.PI * 2;
+        const ring = CONFIG.ISLAND_SECONDARY_RING_MIN +
+            xorshift32(state) * (CONFIG.ISLAND_SECONDARY_RING_MAX - CONFIG.ISLAND_SECONDARY_RING_MIN);
+        const radius = CONFIG.ISLAND_SECONDARY_RADIUS_MIN +
+            xorshift32(state) * (CONFIG.ISLAND_SECONDARY_RADIUS_MAX - CONFIG.ISLAND_SECONDARY_RADIUS_MIN);
+
+        secondaryIslands.push({
+            x: Math.cos(angle) * ring,
+            z: Math.sin(angle) * ring,
+            radius,
+        });
+    }
+}
+
+function getIslandMask(x: number, z: number): number {
+    const dist = Math.hypot(x, z);
+    const mainStart = CONFIG.ISLAND_MAIN_RADIUS;
+    const mainEnd = CONFIG.ISLAND_MAIN_RADIUS + CONFIG.ISLAND_SHORE_FADE;
+
+    let mask = 1.0 - smoothstep(mainStart, mainEnd, dist);
+
+    for (let i = 0; i < secondaryIslands.length; i++) {
+        const island = secondaryIslands[i];
+        const d = Math.hypot(x - island.x, z - island.z);
+        const start = island.radius;
+        const end = island.radius + CONFIG.ISLAND_SHORE_FADE * 0.55;
+        const satelliteMask = 1.0 - smoothstep(start, end, d);
+        mask = Math.max(mask, satelliteMask * 0.9);
+    }
+
+    return Math.max(0, Math.min(1, mask));
+}
+
+regenerateSecondaryIslands();
 
 // --- TERRAIN HEIGHT CACHE ---
 const terrainCache = new Map<string, number>();
@@ -143,6 +199,7 @@ export function getTerrainHeight(x: number, z: number): number {
 
     // Calculate terrain height
     const scale = CONFIG.TERRAIN_SCALE;
+    const islandMask = getIslandMask(x, z);
 
     // Layer 1: Base Rolling Hills
     const n1 = noise2D(x * scale, z * scale);
@@ -158,12 +215,16 @@ export function getTerrainHeight(x: number, z: number): number {
     const valleyNoise = noise2D(x * scale * 0.15, z * scale * 0.15);
     const valleys = Math.min(0, valleyNoise) * 1.5; // Only negative values, creates depressions
 
-    let h = (n1 + n2 + mtn + valleys) * CONFIG.TERRAIN_HEIGHT;
+    const terrainShape = (n1 + n2 + mtn + valleys) * CONFIG.TERRAIN_HEIGHT;
 
-    // Add bias to create more water areas (shift terrain down slightly)
-    h -= CONFIG.TERRAIN_HEIGHT * 0.15;
+    // Keep lots of playable terrain in the island center, but force distant areas underwater.
+    const baseLift = CONFIG.TERRAIN_HEIGHT * 0.9;
+    const oceanDepth = (1.0 - islandMask) * CONFIG.ISLAND_WATER_DEPTH_BIAS;
 
-    // h clamping removed to allow depth below water level
+    let h = terrainShape * islandMask + baseLift * islandMask - oceanDepth;
+
+    // Preserve some local depressions for lakes/shallows on islands.
+    h -= CONFIG.TERRAIN_HEIGHT * 0.08;
 
     // Cache the result with simple eviction when full
     if (terrainCache.size >= MAX_CACHE_SIZE) {
