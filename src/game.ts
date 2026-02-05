@@ -817,7 +817,10 @@ export class Game {
                 }
             }
 
-            if (!snakeState.alive) {
+            if (snakeState.alive) {
+                this.alivePlayers.add(snakeState.playerId);
+            } else {
+                this.alivePlayers.delete(snakeState.playerId);
                 snake.hide();
                 if (snakeState.playerId === this.localPlayerId) {
                     this.audio.playCrash();
@@ -1504,8 +1507,6 @@ export class Game {
             }
 
             const statePayload = this.hostSimulation.getStatePayload();
-            this.syncAlivePlayersFromState(statePayload.snakes);
-            this.ensureValidSpectatorTarget();
             this.networkManager?.sendState(statePayload);
         } else {
             // Tick remote interpolators (client only)
