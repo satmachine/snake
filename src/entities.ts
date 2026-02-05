@@ -408,6 +408,7 @@ export class Snake {
 
     growPending: number = 0;
 
+    isRemote: boolean = false;
     isBoosting: boolean = false;
     boostTimer: number = 0;
 
@@ -521,6 +522,10 @@ export class Snake {
 
     setBaseSpeed(speed: number) { this.targetBaseSpeed = speed; }
     setTurn(turn: number) { this.turnFactor = turn; }
+    setInput(turn: -1 | 0 | 1, boost: boolean) {
+        this.setTurn(turn);
+        this.setBoosting(boost);
+    }
 
     updatePalette(palette: Palette) {
         this.currentHeadColor = palette.colors.SNAKE_HEAD;
@@ -1011,7 +1016,15 @@ export class Snake {
 }
 
 // --- APPLE MANAGER ---
+
+export interface EatResult {
+    playerId: string;
+    appleId: string;
+    position: THREE.Vector3;
+}
+
 interface Apple {
+    id: string;
     mesh: THREE.Mesh;
     velocity: THREE.Vector3;
     isFalling: boolean;
@@ -1020,24 +1033,30 @@ interface Apple {
     baseY?: number;
 }
 
+export type SnakeHeadProvider = () => Array<{ id: string; position: THREE.Vector3 }>;
+
 export class AppleManager {
     scene: THREE.Scene;
-    snake: Snake;
     activeApples: Apple[] = [];
+    private nextAppleId: number = 0;
+    private getSnakeHeads: SnakeHeadProvider;
+    isHost: boolean;
 
+    // Legacy single-snake reference for backward compat with onEat callback
     onEat?: (position: THREE.Vector3) => void;
 
-    constructor(scene: THREE.Scene, snake: Snake) {
+    constructor(scene: THREE.Scene, getSnakeHeads: SnakeHeadProvider, isHost: boolean = true) {
         this.scene = scene;
-        this.snake = snake;
+        this.getSnakeHeads = getSnakeHeads;
+        this.isHost = isHost;
     }
 
-    spawnApple(treeProp: Prop) {
-        if (treeProp.type !== 'tree') return;
+    spawnApple(treeProp: Prop): string {
+        if (treeProp.type !== 'tree') return '';
 
+        const id = String(this.nextAppleId++);
         const mesh = new THREE.Mesh(ASSETS.geoApple, ASSETS.matApple);
 
-        // FIX: Access position directly from Prop, no mesh access
         const treePos = treeProp.position;
         const angle = Math.random() * Math.PI * 2;
 
@@ -1053,32 +1072,40 @@ export class AppleManager {
         this.scene.add(mesh);
 
         this.activeApples.push({
+            id,
             mesh,
             velocity: new THREE.Vector3(0, 0, 0),
             isFalling: true,
             landed: false,
             time: Math.random() * 100
         });
+
+        return id;
     }
 
-    update(dt: number): boolean {
-        let ate = false;
-        const eatDist = 2.5; // Slightly larger eat radius for air grabs
-        const headPos = this.snake.bodyMeshes[0].position;
+    update(dt: number): EatResult[] {
+        const eatResults: EatResult[] = [];
+        const eatDist = 2.5;
         const cullDistSq = CONFIG.APPLE_CULL_DIST * CONFIG.APPLE_CULL_DIST;
+        const heads = this.getSnakeHeads();
+
+        // Use first head for distance culling (local player)
+        const cullRef = heads.length > 0 ? heads[0].position : null;
 
         for (let i = this.activeApples.length - 1; i >= 0; i--) {
             const apple = this.activeApples[i];
-            const distSqToHead = headPos.distanceToSquared(apple.mesh.position);
 
-            if (distSqToHead > cullDistSq) {
-                this.scene.remove(apple.mesh);
-                this.activeApples.splice(i, 1);
-                continue;
+            // Cull distant apples relative to first head
+            if (cullRef) {
+                const distSqToCull = cullRef.distanceToSquared(apple.mesh.position);
+                if (distSqToCull > cullDistSq) {
+                    this.scene.remove(apple.mesh);
+                    this.activeApples.splice(i, 1);
+                    continue;
+                }
             }
 
-            // Apple lights removed for performance - emissive material with bloom provides sufficient glow
-
+            // Physics (falling, bobbing) — runs on all modes
             if (apple.isFalling) {
                 apple.velocity.y -= 25.0 * dt;
                 apple.mesh.position.addScaledVector(apple.velocity, dt);
@@ -1105,21 +1132,62 @@ export class AppleManager {
                 apple.mesh.rotation.z += dt * 0.5;
             }
 
-            const distSq = headPos.distanceToSquared(apple.mesh.position);
+            // Eating detection — only in host mode (singleplayer is always host)
+            if (this.isHost) {
+                let eaten = false;
+                for (const head of heads) {
+                    const distSq = head.position.distanceToSquared(apple.mesh.position);
+                    if (distSq < eatDist * eatDist) {
+                        const pos = apple.mesh.position.clone();
+                        this.scene.remove(apple.mesh);
+                        this.activeApples.splice(i, 1);
 
-            if (distSq < eatDist * eatDist) {
-                const pos = apple.mesh.position.clone();
-                this.scene.remove(apple.mesh);
-                this.activeApples.splice(i, 1);
+                        if (this.onEat) this.onEat(pos);
 
-                if (this.onEat) this.onEat(pos);
-
-                this.snake.growPending += CONFIG.GROWTH_PER_APPLE;
-                ate = true;
+                        eatResults.push({
+                            playerId: head.id,
+                            appleId: apple.id,
+                            position: pos,
+                        });
+                        eaten = true;
+                        break;
+                    }
+                }
+                if (eaten) continue;
             }
         }
 
-        return ate;
+        return eatResults;
+    }
+
+    // --- Network helpers for client mode ---
+
+    addAppleFromNet(id: string, x: number, y: number, z: number): void {
+        const mesh = new THREE.Mesh(ASSETS.geoApple, ASSETS.matApple);
+        mesh.position.set(x, y, z);
+        this.scene.add(mesh);
+
+        this.activeApples.push({
+            id,
+            mesh,
+            velocity: new THREE.Vector3(0, 0, 0),
+            isFalling: false,
+            landed: true,
+            time: Math.random() * 100,
+            baseY: getTerrainHeight(x, z),
+        });
+    }
+
+    removeAppleFromNet(id: string): void {
+        const idx = this.activeApples.findIndex(a => a.id === id);
+        if (idx >= 0) {
+            this.scene.remove(this.activeApples[idx].mesh);
+            this.activeApples.splice(idx, 1);
+        }
+    }
+
+    getAppleById(id: string): Apple | undefined {
+        return this.activeApples.find(a => a.id === id);
     }
 
     reset() {
@@ -1127,6 +1195,7 @@ export class AppleManager {
             this.scene.remove(a.mesh);
         }
         this.activeApples = [];
+        this.nextAppleId = 0;
     }
 }
 
