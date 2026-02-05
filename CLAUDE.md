@@ -12,6 +12,8 @@ A 3D snake game built with Three.js and TypeScript.
 - `src/net/protocol.ts` - Multiplayer network message types and payload interfaces
 - `src/net/network.ts` - NetworkManager: Supabase Realtime Broadcast/Presence wrapper
 - `src/net/lobby.ts` - LobbyManager: pre-game room coordination (create/join/start)
+- `src/net/host.ts` - HostSimulation: authoritative physics, PvP collision, game end detection
+- `src/net/client.ts` - ClientPredictor (client-side prediction) and InterpolationBuffer (remote smoothing)
 - `src/` - Other game modules (terrain, rendering, particles, audio, etc.)
 
 ## Key Systems
@@ -53,7 +55,7 @@ Public high score leaderboard using Supabase:
 - Rocks knock out snake unless boosting (breaks rocks)
 - Longer snake = faster base speed
 
-### Multiplayer (WIP — Phase 1 complete)
+### Multiplayer (WIP — Phase 3 complete)
 
 Online multiplayer (2-4 players) using Supabase Realtime Broadcast with host-client architecture. The lobby creator is the host; other players are clients who send inputs and receive state.
 
@@ -85,26 +87,59 @@ Online multiplayer (2-4 players) using Supabase Realtime Broadcast with host-cli
 
 **Protocol** (`src/net/protocol.ts`):
 - All message types: `PlayerId`, `PlayerInfo`, `LobbyJoinPayload`, `LobbyStatePayload`, `LobbyStartPayload`
-- Gameplay types (for Phase 2+): `InputPayload`, `SnakeNetState`, `StatePayload`, `GameEvent`, `RankingEntry`
+- Gameplay types: `InputPayload`, `SnakeNetState`, `StatePayload`, `GameEvent`, `RankingEntry`
 - `MessageType` union of all event name strings
 
-**Lobby UI** (`src/ui.ts`):
-- Menu: CREATE GAME / JOIN GAME buttons, room code input, player name input
-- Lobby screen: room code display, color-coded player list, START GAME (host only), LEAVE
-- Additional multiplayer UI scaffolding: spectator banner, kill feed, multiplayer results screen
+**Host Simulation** (`src/net/host.ts`):
+- `HostSimulation` runs authoritative physics for all snakes on the host
+- `addPlayer(id, snake, colorIndex)` / `removePlayer(id)` — manage player records
+- `receiveInput(input)` — buffers inputs from clients (keeps latest 3)
+- `simulate(dt, obstacles)` — applies inputs, runs EP drain/regen, calls `snake.update()` per player, then `checkPvPCollisions()`
+- `handleEat(playerId, appleId, position)` — processes apple consumption (score, EP, growth, speed)
+- `getStatePayload()` — serializes all snake states + flushes pending events; includes path keypoints every 5th tick
+- Each player has independent EP, score, kills, alive status tracked in `PlayerRecord`
+- **PvP Collision** (`checkPvPCollisions()`): head-to-body (skip first 3 segments, radius 0.75+0.5, height tolerance 3.0) and head-to-head (distance < 1.5, longer snake survives, equal = both die). Emits death events with `killerId` and `reason: 'pvp'`.
+- **Game End** (`checkGameEnd()`): when ≤1 player alive, builds `RankingEntry[]` from `deathOrder` (first to die = worst placement). Returns `game_over` event with rankings (names filled by `game.ts` from lobby data).
+
+**Client Prediction & Interpolation** (`src/net/client.ts`):
+- `ClientPredictor`: runs local physics every frame for the client's own snake; on server state, discards acked inputs, measures divergence. Hard-snap if > 5 units, lerp correction (0.3 blend) if 0.1–5 units. Syncs segment count and boost state.
+- `InterpolationBuffer`: buffers remote snake states with timestamps. Renders 100ms behind real time (INTERPOLATION_DELAY). Lerps position/angle between two bracketing states. Falls back to dead-reckoning extrapolation (max 200ms) if only one state available.
+- Constants: `SNAP_THRESHOLD = 5.0`, `CORRECTION_LERP = 0.3`, `INTERPOLATION_DELAY = 100`, `MAX_EXTRAPOLATION = 200`, `BUFFER_SIZE = 20`
+
+**Apple Manager** (`src/entities.ts` — `AppleManager`):
+- Refactored to support multiple snakes: constructor takes `SnakeHeadProvider` callback instead of single `Snake`
+- `isHost` flag: only checks eating in host mode; clients receive eat events from network
+- Apple IDs: each apple gets a unique string ID for network sync
+- `update(dt)` returns `EatResult[]` (playerId, appleId, position) instead of boolean
+- `addAppleFromNet(id, x, y, z)` / `removeAppleFromNet(id)` — client-side network sync
+- `getAppleById(id)` — lookup for event generation
+
+**Snake Enhancements** (`src/entities.ts` — `Snake`):
+- `isRemote: boolean` — marks remote-controlled snakes
+- `setInput(turn, boost)` — single-call API for host simulation to apply inputs
 
 **Game Integration** (`src/game.ts`):
-- `mode: 'singleplayer' | 'multiplayer'` property
-- `createMultiplayerRoom(name)` / `joinMultiplayerRoom(code, name)` / `leaveMultiplayerRoom()`
-- `startMultiplayerGame(payload)` seeds terrain, creates Snake instances at spawn positions with assigned colors
+- `mode: 'singleplayer' | 'multiplayer'` + `isHost: boolean` properties
+- `hostSimulation: HostSimulation | null` — created on game start for host
+- `clientPredictor: ClientPredictor | null` — created for non-host clients
+- `remoteInterpolators: Map<PlayerId, InterpolationBuffer>` — one per remote snake on clients
+- `spectatingPlayerId: PlayerId | null` — which player the camera follows after local death
+- `addSnake(playerId, x, z, angle, colorIndex)` / `removeSnake(playerId)` — multi-snake management
+- `updatePhysics` branches: `updatePhysicsSingleplayer` (unchanged) vs `updatePhysicsMultiplayer`
+- **Host loop**: reads local input → feeds to HostSimulation + sends via network; receives remote inputs via `'input'` listener; runs `hostSimulation.simulate(dt)`; handles apple eating/spawning; calls `checkGameEnd()` → broadcasts game_over with player names; rate-limited `sendState()`
+- **Client loop**: sends local input via network; runs `clientPredictor.predict()` locally each frame; on state arrival, `clientPredictor.reconcile()` corrects local snake, `InterpolationBuffer.pushState()` buffers remote states; tick interpolators each frame for smooth remote rendering
+- `handleGameEvent` death case: shows kill feed with killer name for PvP (`"KILLER SEVERED VICTIM"`) or reason for other deaths. Enters spectator mode if local player dies.
+- **Spectator mode**: `enterSpectatorMode()` transitions to `GameState.SPECTATING`; `spectateNextPlayer()` cycles alive remote snakes; TAB key bound during SPECTATING; camera follows spectated snake; `updatePhysicsSpectating()` keeps world/interpolation ticking
+- `updateVisuals` calls `updateBodyVisuals()` on ALL snakes in multiplayer; emits boost particles for remote snakes
+- Season palette changes don't override multiplayer player colors
 - `GameState.LOBBY` renders orbiting camera while in lobby
 - Single-player flow is unaffected
 
-**Phase 1 Milestone**: Two browser tabs can create/join a room and see each other in the lobby.
+**Phase 2 Milestone**: Host runs authoritative simulation, clients receive and render state. Apples sync across tabs. Multiple snakes visible and moving.
+
+**Phase 3 Milestone**: PvP collision kills snakes on contact. Clients run local prediction and smooth reconciliation. Remote snakes interpolated 100ms behind. Dead players spectate alive ones with TAB cycling. Game ends when ≤1 alive, results screen shows placements/scores/kills.
 
 **Remaining Phases** (tracked on [Linear — Multi-Snake project](https://linear.app/iplus1/project/multi-snake-d9d7d3893af2)):
-- Phase 2: Core multiplayer game loop (host simulation, multi-snake support, apple sync)
-- Phase 3: Client-side prediction, remote interpolation, PvP collision, spectating, results
 - Phase 4: Disconnect handling, name labels, kill feed, countdown, performance testing
 
 ## Development Workflow
@@ -128,6 +163,10 @@ This file must reflect what actually exists in the codebase — not what's plann
 - **Include constants and config values**: document actual values (e.g. `MAX_PLAYERS: 4`, `NET_INPUT_RATE: 50`) so they're easy to find without reading source.
 - **Keep it concise**: match the existing style. Bullet points over paragraphs. No need to explain every method — focus on architecture, key APIs, and non-obvious behavior.
 - **Verify single-player is unaffected**: after any multiplayer change, confirm single-player still works. Note this as a development guideline if it's ever broken.
+
+### Git Commits
+
+Commit often with descriptive messages. Each logical unit of work should be its own commit — don't batch unrelated changes together. Commit messages should explain **what** changed and **why**, with enough context for a future reader. Always verify the build passes before committing.
 
 ### Build Verification
 
