@@ -137,6 +137,7 @@ export class Game {
     countdownActive: boolean = false;
     countdownEndTime: number = 0;
     private deathAnimations: Map<Snake, { startTime: number }> = new Map();
+    private alivePlayers: Set<PlayerId> = new Set();
 
     constructor() {
         // Detect mobile devices
@@ -240,6 +241,7 @@ export class Game {
             this.clientPredictor = null;
             this.remoteInterpolators.clear();
             this.spectatingPlayerId = null;
+            this.alivePlayers.clear();
             this.nameLabelManager?.destroy();
             this.nameLabelManager = null;
 
@@ -351,6 +353,7 @@ export class Game {
         canvas.addEventListener('touchstart', (e) => this.handleTouch(e), { passive: false });
         canvas.addEventListener('touchmove', (e) => this.handleTouch(e), { passive: false });
         canvas.addEventListener('touchend', (e) => this.handleTouch(e), { passive: false });
+        canvas.addEventListener('pointerdown', (e) => this.handleSpectatorPointer(e));
 
         this.renderer.setAnimationLoop((time) => this.animate(time));
     }
@@ -451,11 +454,22 @@ export class Game {
     }
 
     handleKey(e: KeyboardEvent, pressed: boolean) {
-        // TAB to cycle spectated player
-        if (this.state === GameState.SPECTATING && e.key === 'Tab' && pressed) {
-            e.preventDefault();
-            this.spectateNextPlayer();
-            return;
+        if (this.state === GameState.SPECTATING && pressed) {
+            switch (e.key) {
+                case 'Tab':
+                case 'ArrowRight':
+                case 'd':
+                case 'D':
+                    e.preventDefault();
+                    this.spectateNextPlayer(1);
+                    return;
+                case 'ArrowLeft':
+                case 'a':
+                case 'A':
+                    e.preventDefault();
+                    this.spectateNextPlayer(-1);
+                    return;
+            }
         }
 
         if (this.state !== GameState.PLAYING) return;
@@ -480,6 +494,16 @@ export class Game {
 
     // --- TOUCH HANDLER ---
     handleTouch(e: TouchEvent) {
+        if (this.state === GameState.SPECTATING) {
+            if (e.type === 'touchstart' && e.touches.length > 0) {
+                e.preventDefault();
+                const halfWidth = window.innerWidth / 2;
+                const x = e.touches[0].clientX;
+                this.spectateNextPlayer(x < halfWidth ? -1 : 1);
+            }
+            return;
+        }
+
         if (this.state !== GameState.PLAYING) return;
         if (this.countdownActive) return;
 
@@ -507,6 +531,17 @@ export class Game {
         // 2 Finger Boost Logic
         if (e.touches.length >= 2) {
             this.keys.boost = true;
+        }
+    }
+
+    private handleSpectatorPointer(e: PointerEvent): void {
+        if (this.state !== GameState.SPECTATING) return;
+
+        const halfWidth = window.innerWidth / 2;
+        if (e.clientX < halfWidth) {
+            this.spectateNextPlayer(-1);
+        } else {
+            this.spectateNextPlayer(1);
         }
     }
 
@@ -726,6 +761,8 @@ export class Game {
 
             // Broadcast state at rate-limited interval
             const statePayload = this.hostSimulation.getStatePayload();
+            this.syncAlivePlayersFromState(statePayload.snakes);
+            this.ensureValidSpectatorTarget();
             this.networkManager?.sendState(statePayload);
 
             // Update local EP bar from host simulation
@@ -780,7 +817,6 @@ export class Game {
                 }
             }
 
-            // Handle death
             if (!snakeState.alive) {
                 snake.hide();
                 if (snakeState.playerId === this.localPlayerId) {
@@ -789,6 +825,9 @@ export class Game {
                 }
             }
         }
+
+        this.syncAlivePlayersFromState(payload.snakes);
+        this.ensureValidSpectatorTarget();
 
         // Apply path keypoints for smoother remote rendering
         if (payload.paths) {
@@ -846,6 +885,7 @@ export class Game {
                 }
                 // Remove name label for dead player
                 this.nameLabelManager?.removeLabel(event.playerId);
+                this.alivePlayers.delete(event.playerId);
                 // Enter spectator mode if local player died in multiplayer
                 if (event.playerId === this.localPlayerId && this.mode === 'multiplayer') {
                     this.enterSpectatorMode();
@@ -1050,7 +1090,7 @@ export class Game {
         let targetSnake = this.snake;
         if (this.state === GameState.SPECTATING && this.spectatingPlayerId) {
             const spectated = this.multiplayerSnakes.get(this.spectatingPlayerId);
-            if (spectated && spectated.mesh.visible) {
+            if (spectated && this.alivePlayers.has(this.spectatingPlayerId)) {
                 targetSnake = spectated;
             }
         }
@@ -1351,12 +1391,12 @@ export class Game {
         this.spectateNextPlayer();
     }
 
-    spectateNextPlayer(): void {
+    spectateNextPlayer(direction: 1 | -1 = 1): void {
         // Find alive remote snakes
         const aliveIds: PlayerId[] = [];
-        for (const [pid, s] of this.multiplayerSnakes) {
+        for (const [pid] of this.multiplayerSnakes) {
             if (pid === this.localPlayerId) continue;
-            if (s.mesh.visible) {
+            if (this.alivePlayers.has(pid)) {
                 aliveIds.push(pid);
             }
         }
@@ -1370,7 +1410,7 @@ export class Game {
 
         // Cycle to next alive player
         const currentIdx = this.spectatingPlayerId ? aliveIds.indexOf(this.spectatingPlayerId) : -1;
-        const nextIdx = (currentIdx + 1) % aliveIds.length;
+        const nextIdx = (currentIdx + direction + aliveIds.length) % aliveIds.length;
         this.spectatingPlayerId = aliveIds[nextIdx];
 
         // Show spectator banner with player name
@@ -1378,25 +1418,97 @@ export class Game {
         this.ui.showSpectator(name);
     }
 
+    private syncAlivePlayersFromState(states: Array<{ playerId: PlayerId; alive: boolean }>): void {
+        this.alivePlayers.clear();
+        for (const state of states) {
+            if (state.alive) {
+                this.alivePlayers.add(state.playerId);
+            }
+        }
+    }
+
+    private ensureValidSpectatorTarget(): void {
+        if (this.state !== GameState.SPECTATING) return;
+        if (!this.spectatingPlayerId || !this.alivePlayers.has(this.spectatingPlayerId)) {
+            this.spectateNextPlayer(1);
+        }
+    }
+
     private updatePhysicsSpectating(dt: number): void {
-        // While spectating, we still need to process remote state updates
-        // and keep the world rendering around the spectated player
+        // Keep simulation and visuals running after local death so multiplayer continues.
+        this.dayTime += dt * 0.05;
+
         const spectatedSnake = this.spectatingPlayerId
             ? this.multiplayerSnakes.get(this.spectatingPlayerId)
             : null;
+        const focusSnake = spectatedSnake && this.spectatingPlayerId && this.alivePlayers.has(this.spectatingPlayerId)
+            ? spectatedSnake
+            : this.snake;
 
-        if (spectatedSnake) {
-            this.world.update(spectatedSnake.position.x, spectatedSnake.position.z);
-            this.sunLight.position.x = spectatedSnake.position.x + 50;
-            this.sunLight.position.z = spectatedSnake.position.z + 50;
-        }
+        this.world.update(focusSnake.position.x, focusSnake.position.z);
+        this.sunLight.position.x = focusSnake.position.x + 50;
+        this.sunLight.position.z = focusSnake.position.z + 50;
 
         if (this.water) {
             this.water.material.uniforms['sunDirection'].value.copy(this.sunLight.position).normalize();
         }
 
-        // Tick remote interpolators (client only)
-        if (!this.isHost) {
+        if (this.isHost && this.hostSimulation) {
+            // Local player is dead while spectating, but host must keep the authoritative sim running.
+            this.hostSimulation.receiveInput({
+                playerId: this.localPlayerId,
+                seq: this.inputSeq++,
+                turn: 0,
+                boost: false,
+            });
+
+            const obstacles = this.world.getObstacles();
+            this.hostSimulation.simulate(dt, obstacles);
+
+            const eatResults = this.appleManager.update(dt);
+            for (const eat of eatResults) {
+                this.hostSimulation.handleEat(eat.playerId, eat.appleId, {
+                    x: eat.position.x,
+                    y: eat.position.y,
+                    z: eat.position.z,
+                });
+            }
+
+            if (this.appleManager.activeApples.length < CONFIG.MAX_APPLES && Math.random() < CONFIG.SPAWN_CHANCE) {
+                const tree = this.world.getRandomTree();
+                if (tree) {
+                    const appleId = this.appleManager.spawnApple(tree);
+                    if (appleId) {
+                        const apple = this.appleManager.getAppleById(appleId);
+                        if (apple) {
+                            this.hostSimulation.pendingEvents.push({
+                                type: 'apple_spawn',
+                                appleId,
+                                x: apple.mesh.position.x,
+                                y: apple.mesh.position.y,
+                                z: apple.mesh.position.z,
+                            });
+                        }
+                    }
+                }
+            }
+
+            const gameEndEvent = this.hostSimulation.checkGameEnd();
+            if (gameEndEvent && gameEndEvent.type === 'game_over') {
+                const lobbyPlayers = this.lobbyManager?.getPlayerList() || [];
+                for (const ranking of gameEndEvent.rankings) {
+                    const player = lobbyPlayers.find(p => p.id === ranking.playerId);
+                    ranking.name = player?.name || 'UNKNOWN';
+                }
+                this.hostSimulation.pendingEvents.push(gameEndEvent);
+            }
+
+            const statePayload = this.hostSimulation.getStatePayload();
+            this.syncAlivePlayersFromState(statePayload.snakes);
+            this.ensureValidSpectatorTarget();
+            this.networkManager?.sendState(statePayload);
+        } else {
+            // Tick remote interpolators (client only)
             const now = performance.now();
             for (const [pid, interp] of this.remoteInterpolators) {
                 const snake = this.multiplayerSnakes.get(pid);
@@ -1440,6 +1552,8 @@ export class Game {
         if (!snake) return;
         snake.mesh.parent?.remove(snake.mesh);
         this.multiplayerSnakes.delete(playerId);
+        this.remoteInterpolators.delete(playerId);
+        this.alivePlayers.delete(playerId);
     }
 
     async createMultiplayerRoom(name: string) {
@@ -1501,6 +1615,7 @@ export class Game {
         this.clientPredictor = null;
         this.remoteInterpolators.clear();
         this.spectatingPlayerId = null;
+        this.alivePlayers.clear();
         this.hostPlayerId = '';
         this.playerNames.clear();
         this.nameLabelManager?.destroy();
@@ -1575,6 +1690,7 @@ export class Game {
         this.clientPredictor = null;
         this.remoteInterpolators.clear();
         this.spectatingPlayerId = null;
+        this.alivePlayers.clear();
 
         // Create snakes for all players using addSnake helper
         const players = this.lobbyManager?.getPlayerList() || [];
@@ -1594,6 +1710,8 @@ export class Game {
             this.addSnake(pid, spawn.x, spawn.z, spawn.angle, colorIndex);
         }
 
+        this.alivePlayers = new Set(payload.playerOrder);
+
         // Create name labels for all players
         this.nameLabelManager?.destroy();
         this.nameLabelManager = new NameLabelManager();
@@ -1611,7 +1729,7 @@ export class Game {
                 () => {
                     const heads: Array<{ id: string; position: THREE.Vector3 }> = [];
                     for (const [pid, s] of this.multiplayerSnakes) {
-                        if (s.bodyMeshes.length > 0 && s.mesh.visible) {
+                        if (s.bodyMeshes.length > 0 && this.alivePlayers.has(pid)) {
                             heads.push({ id: pid, position: s.bodyMeshes[0].position });
                         }
                     }
