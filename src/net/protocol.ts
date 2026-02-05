@@ -27,6 +27,7 @@ export interface LobbyStartPayload {
     terrainSeed: number;
     spawns: Record<PlayerId, { x: number; z: number; angle: number }>;
     playerOrder: PlayerId[]; // for consistent ordering
+    countdownEndTime: number; // timestamp when countdown ends and game starts
 }
 
 // --- Gameplay Messages ---

@@ -29,6 +29,7 @@ export class UI {
     spectatorEl!: HTMLDivElement;
     killFeedEl!: HTMLDivElement;
     mpResultsEl!: HTMLDivElement;
+    countdownEl!: HTMLDivElement;
 
     onStartClick: () => void = () => { };
     onRestartClick: () => void = () => { };
@@ -434,6 +435,26 @@ export class UI {
         });
         this.container.appendChild(this.mpResultsEl);
 
+        // --- COUNTDOWN ---
+        this.countdownEl = document.createElement('div');
+        style(this.countdownEl, {
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            fontSize: '120px',
+            fontFamily: '"Courier New", Courier, monospace',
+            fontWeight: '100',
+            color: '#00E5FF',
+            textShadow: '0 0 40px rgba(0,229,255,0.8), 0 0 80px rgba(0,229,255,0.4)',
+            zIndex: '35',
+            display: 'none',
+            pointerEvents: 'none',
+            letterSpacing: '10px',
+            transition: 'transform 0.3s ease-out, opacity 0.3s ease',
+        });
+        this.container.appendChild(this.countdownEl);
+
         // Hover Effects
         const addHover = (btn: HTMLElement, color: string) => {
             btn.addEventListener('mouseenter', () => {
@@ -740,6 +761,61 @@ export class UI {
         } else {
             this.lobbyStartBtnEl.style.opacity = '1';
         }
+    }
+
+    // --- COUNTDOWN ---
+
+    startCountdown(durationMs: number): void {
+        const steps = Math.floor(durationMs / 1000);
+        let step = 0;
+
+        const showNumber = (text: string) => {
+            this.countdownEl.textContent = text;
+            this.countdownEl.style.display = 'block';
+            this.countdownEl.style.opacity = '1';
+            this.countdownEl.style.transform = 'translate(-50%, -50%) scale(2)';
+
+            // Animate scale down
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    this.countdownEl.style.transform = 'translate(-50%, -50%) scale(1)';
+                });
+            });
+
+            // Fade after 700ms
+            setTimeout(() => {
+                this.countdownEl.style.opacity = '0.3';
+            }, 700);
+        };
+
+        // Show countdown numbers: 3, 2, 1
+        showNumber(String(steps - step));
+        step++;
+
+        const interval = setInterval(() => {
+            if (step < steps) {
+                showNumber(String(steps - step));
+                step++;
+            } else {
+                // Show GO!
+                this.countdownEl.textContent = 'GO!';
+                this.countdownEl.style.opacity = '1';
+                this.countdownEl.style.transform = 'translate(-50%, -50%) scale(2)';
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        this.countdownEl.style.transform = 'translate(-50%, -50%) scale(1)';
+                    });
+                });
+
+                // Hide after 500ms
+                setTimeout(() => {
+                    this.countdownEl.style.display = 'none';
+                    this.countdownEl.style.opacity = '1';
+                }, 500);
+
+                clearInterval(interval);
+            }
+        }, 1000);
     }
 
     // --- SPECTATOR UI ---

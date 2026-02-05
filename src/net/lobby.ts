@@ -159,6 +159,7 @@ export class LobbyManager {
             terrainSeed,
             spawns,
             playerOrder,
+            countdownEndTime: Date.now() + 3500,
         };
         this.network.sendLobbyStart(payload);
         // Also trigger locally

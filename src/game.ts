@@ -134,6 +134,8 @@ export class Game {
     hostPlayerId: PlayerId = '';
     playerNames: Map<PlayerId, string> = new Map();
     nameLabelManager: NameLabelManager | null = null;
+    countdownActive: boolean = false;
+    countdownEndTime: number = 0;
 
     constructor() {
         // Detect mobile devices
@@ -456,6 +458,7 @@ export class Game {
         }
 
         if (this.state !== GameState.PLAYING) return;
+        if (this.countdownActive) return;
         switch (e.key) {
             case 'ArrowLeft': case 'a': case 'A': this.keys.left = pressed; break;
             case 'ArrowRight': case 'd': case 'D': this.keys.right = pressed; break;
@@ -477,6 +480,7 @@ export class Game {
     // --- TOUCH HANDLER ---
     handleTouch(e: TouchEvent) {
         if (this.state !== GameState.PLAYING) return;
+        if (this.countdownActive) return;
 
         // Prevent browser default behaviors like scrolling or zoom
         e.preventDefault();
@@ -615,6 +619,16 @@ export class Game {
 
         if (this.water) {
             this.water.material.uniforms['sunDirection'].value.copy(this.sunLight.position).normalize();
+        }
+
+        // Countdown: skip input + physics until countdown ends
+        if (this.countdownActive) {
+            if (Date.now() >= this.countdownEndTime) {
+                this.countdownActive = false;
+            } else {
+                this.burstSystem.update(dt);
+                return;
+            }
         }
 
         // Build local input from keys
@@ -1618,6 +1632,11 @@ export class Game {
         const headPos = this.snake.bodyMeshes[0].position.clone();
         this.cameraLookAtCurrent.copy(headPos);
         this.cameraAngle = this.snake.angle;
+
+        // Countdown: freeze physics until countdown ends
+        this.countdownActive = true;
+        this.countdownEndTime = payload.countdownEndTime;
+        this.ui.startCountdown(3000);
 
         this.audio.startMusic();
     }
