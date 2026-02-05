@@ -473,7 +473,7 @@ export class UI {
         this.spectatorEl.innerHTML = `
             <div>SPECTATING</div>
             <div id="spectator-name" style="font-size: 20px; color: #00E5FF; margin-top: 5px;"></div>
-            <div style="font-size: 10px; color: #666; margin-top: 10px;">[TAB] NEXT PLAYER</div>
+            <div style="font-size: 10px; color: #666; margin-top: 10px;">[←/→ OR TAP SIDES] NEXT PLAYER</div>
         `;
         this.container.appendChild(this.spectatorEl);
 
