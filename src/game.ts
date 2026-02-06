@@ -624,10 +624,9 @@ export class Game {
                 this.playerRegistry.markAlive(snakeState.playerId);
             } else {
                 this.playerRegistry.markDead(snakeState.playerId);
-                snake.hide();
-                if (snakeState.playerId === this.localPlayerId) {
-                    this.audio.playCrash();
-                    this.burstSystem.emit(snake.position, 30, 0xFF4081);
+                // Only hide if not currently playing death animation
+                if (!this.deathAnimations.has(snake)) {
+                    snake.hide();
                 }
             }
         }
@@ -712,6 +711,7 @@ export class Game {
     }
 
     private animateSnakeDeath(snake: Snake): void {
+        snake.mesh.visible = true; // Re-show for death animation (may have been hidden)
         this.deathAnimations.set(snake, { startTime: Date.now() });
     }
 

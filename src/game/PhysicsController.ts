@@ -127,6 +127,7 @@ export class PhysicsController {
 
         // Broadcast state
         const statePayload = host.hostSimulation.getStatePayload();
+        host.handleStateUpdate(statePayload);
         host.networkManager?.sendState(statePayload);
     }
 
