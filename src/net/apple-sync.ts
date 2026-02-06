@@ -9,13 +9,13 @@ class AppleSync extends EventEmitter {
         super();
     }
 
-    spawnApple(clientId) {
+    spawnApple(clientId: string) {
         // Logic to spawn apple for the given client
         console.log(`Spawning apple for client: ${clientId}`);
         this.emit('spawn', clientId);
     }
 
-    despawnApple(clientId) {
+    despawnApple(clientId: string) {
         // Logic to despawn apple for the given client
         console.log(`Despawn apple for client: ${clientId}`);
         this.emit('despawn', clientId);

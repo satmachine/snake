@@ -1176,6 +1176,8 @@ export interface NameLabelEntry {
 export class NameLabelManager {
     private container: HTMLDivElement;
     private labels: Map<string, HTMLDivElement> = new Map();
+    private updateInterval = 33; // 30 FPS ≈ 33ms
+    private timeSinceUpdate = 0;
 
     constructor() {
         this.container = document.createElement('div');
@@ -1214,7 +1216,17 @@ export class NameLabelManager {
         }
     }
 
-    update(entries: NameLabelEntry[]): void {
+    update(entries: NameLabelEntry[], dt: number): void {
+        // Throttle updates to 30 FPS for better frame times
+        this.timeSinceUpdate += dt * 1000; // dt is in seconds
+
+        // Skip update if not enough time has passed
+        if (this.timeSinceUpdate < this.updateInterval) {
+            return;
+        }
+
+        this.timeSinceUpdate = 0;
+
         // Hide all labels first
         for (const [, el] of this.labels) {
             el.style.display = 'none';

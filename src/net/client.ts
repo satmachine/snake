@@ -100,10 +100,24 @@ export class InterpolationBuffer {
     private buffer: BufferedState[] = [];
 
     pushState(state: SnakeNetState, timestamp: number): void {
-        this.buffer.push({ state, timestamp });
+        const buffered: BufferedState = { state, timestamp };
+
+        // Binary insert to maintain sort order (ascending by timestamp)
+        let left = 0;
+        let right = this.buffer.length;
+        while (left < right) {
+            const mid = Math.floor((left + right) / 2);
+            if (this.buffer[mid].timestamp < timestamp) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+        this.buffer.splice(left, 0, buffered);
+
         // Keep buffer bounded
         if (this.buffer.length > BUFFER_SIZE) {
-            this.buffer.shift();
+            this.buffer.shift();  // Remove oldest
         }
     }
 
@@ -112,42 +126,43 @@ export class InterpolationBuffer {
 
         const renderTime = currentTime - INTERPOLATION_DELAY;
 
-        // Find bracketing states
-        let older: BufferedState | null = null;
-        let newer: BufferedState | null = null;
+        // Binary search for bracketing states
+        // Buffer is sorted by timestamp (ascending)
+        let left = 0;
+        let right = this.buffer.length - 1;
 
-        for (let i = 0; i < this.buffer.length; i++) {
-            if (this.buffer[i].timestamp <= renderTime) {
-                older = this.buffer[i];
-            } else {
-                newer = this.buffer[i];
-                break;
-            }
+        // Handle edge cases first
+        if (renderTime < this.buffer[0].timestamp) {
+            // Render time is before all buffered states
+            return this.buffer[0].state;
         }
-
-        if (older && newer) {
-            // Interpolate between the two
-            const range = newer.timestamp - older.timestamp;
-            const t = range > 0 ? (renderTime - older.timestamp) / range : 0;
-            return this.lerpState(older.state, newer.state, Math.max(0, Math.min(1, t)));
-        }
-
-        if (older && !newer) {
-            // Extrapolate from last known state (dead reckoning)
+        if (renderTime >= this.buffer[right].timestamp) {
+            // Render time is after all buffered states - extrapolate
+            const older = this.buffer[right];
             const elapsed = renderTime - older.timestamp;
             if (elapsed > MAX_EXTRAPOLATION) {
-                // Too far, just return latest
                 return older.state;
             }
             return this.extrapolate(older.state, elapsed / 1000);
         }
 
-        if (!older && newer) {
-            // Only future state available, use it directly
-            return newer.state;
+        // Binary search to find the two bracketing states
+        while (left < right - 1) {
+            const mid = Math.floor((left + right) / 2);
+            if (this.buffer[mid].timestamp < renderTime) {
+                left = mid;
+            } else {
+                right = mid;
+            }
         }
 
-        return null;
+        const older = this.buffer[left];
+        const newer = this.buffer[right];
+
+        // Interpolate between older and newer
+        const range = newer.timestamp - older.timestamp;
+        const t = range > 0 ? (renderTime - older.timestamp) / range : 0;
+        return this.lerpState(older.state, newer.state, Math.max(0, Math.min(1, t)));
     }
 
     private lerpState(a: SnakeNetState, b: SnakeNetState, t: number): SnakeNetState {
