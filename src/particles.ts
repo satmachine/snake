@@ -1,6 +1,7 @@
 
 import * as THREE from 'three';
 import { CONFIG } from './definitions';
+import { ObjectPool } from './utils/ObjectPool';
 
 interface Particle {
     position: THREE.Vector3;
@@ -22,9 +23,19 @@ export class BurstSystem {
     // We use a fixed pool size to avoid garbage collection
     maxParticles: number;
 
+    // Object pools to reduce allocations
+    private vector3Pool: ObjectPool<THREE.Vector3>;
+
     constructor(scene: THREE.Scene, maxParticles: number = 500) {
         this.scene = scene;
         this.maxParticles = maxParticles;
+
+        // Initialize Vector3 object pool (pre-allocate 200 for common case)
+        this.vector3Pool = new ObjectPool(
+            () => new THREE.Vector3(),
+            (v) => v.set(0, 0, 0),
+            200
+        );
 
         this.geometry = new THREE.BufferGeometry();
         this.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.maxParticles * 3), 3));
@@ -85,9 +96,15 @@ export class BurstSystem {
             const life = 1.0 + Math.random() * 0.5;
             const size = 0.5 + Math.random() * 0.5;
 
+            // Use pooled vectors
+            const pos = this.vector3Pool.acquire();
+            pos.copy(position);
+            const vel = this.vector3Pool.acquire();
+            vel.set(vx, vy, vz);
+
             this.particles.push({
-                position: position.clone(),
-                velocity: new THREE.Vector3(vx, vy, vz),
+                position: pos,
+                velocity: vel,
                 life: life,
                 maxLife: life,
                 size: size,
@@ -113,13 +130,19 @@ export class BurstSystem {
             const life = 2.0 + Math.random() * 1.0; // Longer life for bubbles
             const size = 0.3 + Math.random() * 0.4; // Smaller bubbles
 
+            // Use pooled vectors
+            const pos = this.vector3Pool.acquire();
+            pos.copy(position).add(new THREE.Vector3(
+                (Math.random() - 0.5) * 2,
+                (Math.random() - 0.5) * 2,
+                (Math.random() - 0.5) * 2
+            ));
+            const vel = this.vector3Pool.acquire();
+            vel.set(vx, vy, vz);
+
             this.particles.push({
-                position: position.clone().add(new THREE.Vector3(
-                    (Math.random() - 0.5) * 2,
-                    (Math.random() - 0.5) * 2,
-                    (Math.random() - 0.5) * 2
-                )),
-                velocity: new THREE.Vector3(vx, vy, vz),
+                position: pos,
+                velocity: vel,
                 life: life,
                 maxLife: life,
                 size: size,
@@ -142,6 +165,9 @@ export class BurstSystem {
             p.life -= dt;
 
             if (p.life <= 0) {
+                // Release vectors back to pool
+                this.vector3Pool.release(p.position);
+                this.vector3Pool.release(p.velocity);
                 this.particles.splice(i, 1);
                 continue;
             }
@@ -222,13 +248,15 @@ export class BurstSystem {
             const life = 2.5 + Math.random() * 1.5; // Longer life for better wave effect
             const size = 1.2 + Math.random() * 1.2; // Larger ripples
 
+            // Use pooled vectors
+            const pos = this.vector3Pool.acquire();
+            pos.set(position.x, CONFIG.WATER_LEVEL + 0.1, position.z);
+            const vel = this.vector3Pool.acquire();
+            vel.set(vx, vy, vz);
+
             this.particles.push({
-                position: new THREE.Vector3(
-                    position.x,
-                    CONFIG.WATER_LEVEL + 0.1, // Position at water level
-                    position.z
-                ),
-                velocity: new THREE.Vector3(vx, vy, vz),
+                position: pos,
+                velocity: vel,
                 life: life,
                 maxLife: life,
                 size: size,
@@ -256,13 +284,19 @@ export class BurstSystem {
             const life = 1.2 + Math.random() * 0.6; // Longer life for smoother trail
             const size = 0.5 + Math.random() * 0.4; // Slightly larger for visibility
 
+            // Use pooled vectors
+            const pos = this.vector3Pool.acquire();
+            pos.copy(position).add(new THREE.Vector3(
+                (Math.random() - 0.5) * 0.8,
+                (Math.random() - 0.5) * 0.6,
+                (Math.random() - 0.5) * 0.8
+            ));
+            const vel = this.vector3Pool.acquire();
+            vel.set(vx, vy, vz);
+
             this.particles.push({
-                position: position.clone().add(new THREE.Vector3(
-                    (Math.random() - 0.5) * 0.8,
-                    (Math.random() - 0.5) * 0.6,
-                    (Math.random() - 0.5) * 0.8
-                )),
-                velocity: new THREE.Vector3(vx, vy, vz),
+                position: pos,
+                velocity: vel,
                 life: life,
                 maxLife: life,
                 size: size,
@@ -285,9 +319,15 @@ export class BurstSystem {
             const life = 0.8 + Math.random() * 0.4;
             const size = 1.0 + Math.random() * 1.0;
 
+            // Use pooled vectors
+            const pos = this.vector3Pool.acquire();
+            pos.copy(position);
+            const vel = this.vector3Pool.acquire();
+            vel.set(vx, vy, vz);
+
             this.particles.push({
-                position: position.clone(),
-                velocity: new THREE.Vector3(vx, vy, vz),
+                position: pos,
+                velocity: vel,
                 life: life,
                 maxLife: life,
                 size: size,
@@ -322,9 +362,15 @@ export class BurstSystem {
             const life = 0.3 + Math.random() * 0.1;
             const size = 0.4 + Math.random() * 0.3;
 
+            // Use pooled vectors
+            const pos = this.vector3Pool.acquire();
+            pos.copy(position).add(spawnOffset);
+            const vel = this.vector3Pool.acquire();
+            vel.set(vx, vy, vz);
+
             this.particles.push({
-                position: position.clone().add(spawnOffset),
-                velocity: new THREE.Vector3(vx, vy, vz),
+                position: pos,
+                velocity: vel,
                 life: life,
                 maxLife: life,
                 size: size,
@@ -362,9 +408,15 @@ export class BurstSystem {
                 Math.sin(spiralAngle) * spawnRadius - direction.z * 1.5
             );
 
+            // Use pooled vectors
+            const pos = this.vector3Pool.acquire();
+            pos.copy(position).add(spawnOffset);
+            const vel = this.vector3Pool.acquire();
+            vel.set(vx, vy, vz);
+
             this.particles.push({
-                position: position.clone().add(spawnOffset),
-                velocity: new THREE.Vector3(vx, vy, vz),
+                position: pos,
+                velocity: vel,
                 life: life,
                 maxLife: life,
                 size: size,
@@ -395,13 +447,19 @@ export class BurstSystem {
             // Alternate between white and cyan
             const color = Math.random() > 0.5 ? 0xFFFFFF : 0x88FFFF;
 
+            // Use pooled vectors
+            const pos = this.vector3Pool.acquire();
+            pos.copy(position).add(new THREE.Vector3(
+                (Math.random() - 0.5) * 2,
+                (Math.random() - 0.5) * 1,
+                (Math.random() - 0.5) * 2
+            ));
+            const vel = this.vector3Pool.acquire();
+            vel.set(vx, vy, vz);
+
             this.particles.push({
-                position: position.clone().add(new THREE.Vector3(
-                    (Math.random() - 0.5) * 2,
-                    (Math.random() - 0.5) * 1,
-                    (Math.random() - 0.5) * 2
-                )),
-                velocity: new THREE.Vector3(vx, vy, vz),
+                position: pos,
+                velocity: vel,
                 life: life,
                 maxLife: life,
                 size: size,

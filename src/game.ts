@@ -1080,7 +1080,7 @@ export class Game {
                     });
                 }
 
-                this.nameLabelManager.update(entries);
+                this.nameLabelManager.update(entries, dt);
             }
         }
     }

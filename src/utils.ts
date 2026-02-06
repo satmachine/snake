@@ -226,9 +226,16 @@ export function getTerrainHeight(x: number, z: number): number {
     // Preserve some local depressions for lakes/shallows on islands.
     h -= CONFIG.TERRAIN_HEIGHT * 0.08;
 
-    // Cache the result with simple eviction when full
+    // Cache the result with LRU-style partial eviction when full
     if (terrainCache.size >= MAX_CACHE_SIZE) {
-        terrainCache.clear();
+        // Remove oldest 10% of entries (500 entries) instead of clearing everything
+        // Map iteration order = insertion order, so first entries are oldest
+        const entriesToRemove = Math.floor(MAX_CACHE_SIZE * 0.1);
+        let removed = 0;
+        for (const key of terrainCache.keys()) {
+            terrainCache.delete(key);
+            if (++removed >= entriesToRemove) break;
+        }
     }
     terrainCache.set(key, h);
 
