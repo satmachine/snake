@@ -220,6 +220,10 @@ export class Game {
                 this.scoreSubmitted = true;
                 this.ui.hideSubmitForm();
                 await this.loadLeaderboard();
+                // Return to menu so player sees their updated leaderboard placement
+                this.state = GameState.MENU;
+                this.ui.hideGameOver();
+                this.ui.showMenu();
             }
             this.ui.setSubmitButtonState(false);
         };
