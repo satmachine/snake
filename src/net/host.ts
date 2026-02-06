@@ -1,5 +1,6 @@
 import {
     CONFIG,
+    HOST_INPUT_GRACE_MS,
     PVP_HEAD_BODY_RADIUS,
     PVP_BODY_SEGMENT_RADIUS,
     PVP_HEIGHT_TOLERANCE,
@@ -21,6 +22,7 @@ interface PlayerRecord {
     lastInput: InputPayload | null;
     inputBuffer: InputPayload[];
     lastAckedSeq: number;
+    lastInputTime: number;
 }
 
 export class HostSimulation {
@@ -42,6 +44,7 @@ export class HostSimulation {
             lastInput: null,
             inputBuffer: [],
             lastAckedSeq: 0,
+            lastInputTime: 0,
         });
     }
 
@@ -62,6 +65,7 @@ export class HostSimulation {
         if (!record || !record.alive) return;
 
         record.inputBuffer.push(input);
+        record.lastInputTime = Date.now();
         // Keep only the latest 3 inputs
         if (record.inputBuffer.length > 3) {
             record.inputBuffer.shift();
@@ -101,13 +105,29 @@ export class HostSimulation {
             // Run physics
             const alive = record.snake.update(dt, obstacles);
             if (!alive) {
-                record.alive = false;
-                this.deathOrder.push(pid);
-                this.pendingEvents.push({
-                    type: 'death',
-                    playerId: pid,
-                    reason: 'obstacle',
-                });
+                // Input grace period: forgive environment death if remote player sent input recently
+                const isRemote = record.snake.isRemote;
+                const recentInput = isRemote && (Date.now() - record.lastInputTime) < HOST_INPUT_GRACE_MS;
+                if (recentInput) {
+                    // Forgive — the client likely avoided this but input hasn't arrived yet
+                    record.snake.revive();
+                    record.snake.invulnerableTimer = 0.5; // Brief grace period to prevent death loops
+                } else {
+                    record.alive = false;
+                    this.deathOrder.push(pid);
+                    this.pendingEvents.push({
+                        type: 'death',
+                        playerId: pid,
+                        reason: 'obstacle',
+                    });
+                }
+            }
+        }
+
+        // Update body visuals before PvP collision so segment positions are current-frame
+        for (const [, record] of this.players) {
+            if (record.alive) {
+                record.snake.updateBodyVisuals();
             }
         }
 
@@ -128,6 +148,7 @@ export class HostSimulation {
         // Head-to-body: For each alive snake A, check head against every other alive snake B's body
         for (const [pidA, recA] of aliveEntries) {
             if (deadThisTick.has(pidA)) continue;
+            if (recA.snake.invulnerableTimer > 0) continue; // Skip PvP for invulnerable snakes
             const headA = recA.snake.position;
 
             for (const [pidB, recB] of aliveEntries) {
@@ -166,10 +187,12 @@ export class HostSimulation {
         for (let i = 0; i < aliveEntries.length; i++) {
             const [pidA, recA] = aliveEntries[i];
             if (deadThisTick.has(pidA)) continue;
+            if (recA.snake.invulnerableTimer > 0) continue; // Skip PvP for invulnerable snakes
 
             for (let j = i + 1; j < aliveEntries.length; j++) {
                 const [pidB, recB] = aliveEntries[j];
                 if (deadThisTick.has(pidB)) continue;
+                if (recB.snake.invulnerableTimer > 0) continue; // Skip PvP for invulnerable snakes
 
                 const headA = recA.snake.position;
                 const headB = recB.snake.position;
@@ -337,12 +360,12 @@ export class HostSimulation {
             events,
         };
 
-        // Include path keypoints every 5th tick for smoother remote rendering
-        if (this.tick % 5 === 0) {
+        // Include path keypoints every 2nd tick with denser sampling for smoother remote rendering
+        if (this.tick % 2 === 0) {
             const paths: Record<PlayerId, { x: number; y: number; z: number }[]> = {};
             for (const [pid, record] of this.players) {
                 if (record.alive) {
-                    paths[pid] = record.snake.getPathKeypoints(5);
+                    paths[pid] = record.snake.getPathKeypoints(3);
                 }
             }
             payload.paths = paths;

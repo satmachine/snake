@@ -900,6 +900,7 @@ export class Snake {
                 distAccumulator += headToFirstPath;
             }
 
+            let segmentPlaced = false;
             while (currentPathIndex < this.path.length - 1) {
                 const p1 = this.path[currentPathIndex];
                 const p2 = this.path[currentPathIndex + 1];
@@ -910,11 +911,18 @@ export class Snake {
 
                     mesh.position.lerpVectors(p1, p2, alpha);
                     mesh.updateMatrix();
+                    segmentPlaced = true;
 
                     break;
                 }
                 distAccumulator += d;
                 currentPathIndex++;
+            }
+
+            // Fallback: if path exhausted before placing segment, use last path point
+            if (!segmentPlaced && this.path.length > 0) {
+                mesh.position.copy(this.path[this.path.length - 1]);
+                mesh.updateMatrix();
             }
         }
 
@@ -1013,6 +1021,9 @@ export class Snake {
     }
 
     applyNetState(state: SnakeNetState): void {
+        // Track previous position for path interpolation
+        const prevPos = this.path.length > 0 ? this.path[0].clone() : this.position.clone();
+
         this.position.set(state.x, state.y, state.z);
         this.angle = state.angle;
         this.actualSpeed = state.speed;
@@ -1024,12 +1035,38 @@ export class Snake {
             this.addSegment(false);
         }
 
-        // Record path for body interpolation
+        // Interpolate path from previous position to new position at 0.2-unit spacing
         const PATH_POINT_SPACING = 0.2;
-        if (this.path.length === 0 ||
-            this.position.distanceTo(this.path[0]) >= PATH_POINT_SPACING) {
-            this.path.unshift(this.position.clone());
+        const dx = this.position.x - prevPos.x;
+        const dy = this.position.y - prevPos.y;
+        const dz = this.position.z - prevPos.z;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        if (dist >= PATH_POINT_SPACING && dist <= 20) {
+            // Fill intermediate points from new position back to previous
+            const steps = Math.ceil(dist / PATH_POINT_SPACING);
+            for (let s = 0; s <= steps; s++) {
+                const t = s / steps;
+                this.path.unshift(new THREE.Vector3(
+                    prevPos.x + dx * t,
+                    prevPos.y + dy * t,
+                    prevPos.z + dz * t,
+                ));
+            }
+        } else if (dist >= PATH_POINT_SPACING) {
+            // Teleport/snap — rebuild path from current position
+            this.path = [];
+            const fillCount = this.bodyMeshes.length * 15;
+            for (let i = 0; i <= fillCount; i++) {
+                const d = i * PATH_POINT_SPACING;
+                this.path.push(new THREE.Vector3(
+                    this.position.x - Math.cos(this.angle) * d,
+                    this.position.y,
+                    this.position.z - Math.sin(this.angle) * d,
+                ));
+            }
         }
+
         const approxLimit = 50 + (this.bodyMeshes.length * 20);
         if (this.path.length > approxLimit) {
             this.path.length = approxLimit;
@@ -1046,17 +1083,44 @@ export class Snake {
     }
 
     applyPathKeypoints(keypoints: PathKeypoint[]): void {
-        // Rebuild path from sparse keypoints by interpolating
-        this.path = [];
-        for (let i = 0; i < keypoints.length; i++) {
-            this.path.push(new THREE.Vector3(keypoints[i].x, keypoints[i].y, keypoints[i].z));
+        if (keypoints.length < 2) return;
+
+        // Interpolate between consecutive keypoints at ~0.2 unit spacing
+        const SPACING = 0.2;
+        const densePath: THREE.Vector3[] = [];
+        for (let i = 0; i < keypoints.length - 1; i++) {
+            const a = keypoints[i];
+            const b = keypoints[i + 1];
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const dz = b.z - a.z;
+            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            const steps = Math.max(1, Math.ceil(dist / SPACING));
+            for (let s = 0; s < steps; s++) {
+                const t = s / steps;
+                densePath.push(new THREE.Vector3(
+                    a.x + dx * t,
+                    a.y + dy * t,
+                    a.z + dz * t,
+                ));
+            }
         }
+        // Add the last keypoint
+        const last = keypoints[keypoints.length - 1];
+        densePath.push(new THREE.Vector3(last.x, last.y, last.z));
+
+        // Only replace path if the new one has enough points for the snake's body
+        const minRequired = Math.max(5, this.bodyMeshes.length);
+        // Pad the path if it's too short to avoid rejecting valid keypoints
+        while (densePath.length < minRequired) {
+            densePath.push(densePath[densePath.length - 1].clone());
+        }
+        this.path = densePath;
     }
 
     revive(): void {
         // Restore snake to alive state (for when server overrides client prediction)
         this.isDead = false;
-        this.invulnerableTimer = 1.0; // Brief invulnerability after revival
     }
 
     isAlive(): boolean {
