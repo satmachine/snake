@@ -184,6 +184,39 @@ This file must reflect what actually exists in the codebase — not what's plann
 
 Commit often with descriptive messages. Each logical unit of work should be its own commit — don't batch unrelated changes together. Commit messages should explain **what** changed and **why**, with enough context for a future reader. Always verify the build passes before committing.
 
+### Code Review with Codex
+
+All pull requests must be reviewed by Codex before merging. Follow this workflow:
+
+1. **Create PR**: Push your branch and create a pull request to `main`
+2. **Wait for initial review**: Codex automatically reviews new PRs. Wait for the review to appear.
+3. **Check for reactions**: When you comment `@codex review`, Codex will react with 👀 (eyes emoji) to acknowledge it's working
+4. **Address feedback**: If Codex comments with issues:
+   - Fix the issues in new commits
+   - Push the fixes to the PR branch
+   - Comment `@codex review` to request another review
+   - Wait for Codex's 👀 reaction, then wait for the new review
+5. **Iterate until approved**: Repeat step 4 until Codex has no more feedback
+6. **Wait for approval**: Codex will react with 👍 (thumbs up) when the PR is approved
+7. **Merge**: Only merge after Codex approves with 👍
+
+**Important:**
+- **Never skip Codex review** - even for "small" changes, Codex catches regressions
+- **Never merge without approval** - wait for the 👍 reaction
+- **Address all feedback** - don't dismiss Codex comments without fixing or discussion
+- **Be patient** - Codex may take a few minutes to respond to `@codex review` triggers
+
+**Example interaction:**
+```
+You: [Create PR]
+Codex: [Reviews, finds issue with collision detection]
+You: [Fix issue, commit, push]
+You: "@codex review"
+Codex: [Reacts with 👀]
+Codex: [Reviews again, approves with 👍]
+You: [Merge PR]
+```
+
 ### Build Verification
 
 Always verify after making changes:
