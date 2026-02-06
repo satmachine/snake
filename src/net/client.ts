@@ -24,7 +24,10 @@ export class ClientPredictor {
     }
 
     predict(dt: number, obstacles: Obstacle[]): void {
-        this.snake.update(dt, obstacles);
+        const alive = this.snake.update(dt, obstacles);
+        if (!alive) {
+            this.snake.revive(); // Server is authoritative for deaths
+        }
     }
 
     reconcile(serverState: SnakeNetState): void {

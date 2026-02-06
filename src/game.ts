@@ -25,6 +25,8 @@ import { LobbyManager } from './net/lobby';
 import { HostSimulation } from './net/host';
 import { ClientPredictor, InterpolationBuffer } from './net/client';
 import type { PlayerId, LobbyStartPayload, InputPayload, StatePayload, GameEvent } from './net/protocol';
+import { PlayerRegistry } from './game/PlayerRegistry';
+import { PhysicsController, type PhysicsHost } from './game/PhysicsController';
 
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
@@ -136,20 +138,16 @@ export class Game {
     networkManager: NetworkManager | null = null;
     lobbyManager: LobbyManager | null = null;
     hostSimulation: HostSimulation | null = null;
-    multiplayerSnakes: Map<PlayerId, Snake> = new Map();
+    playerRegistry: PlayerRegistry = new PlayerRegistry();
     localPlayerId: PlayerId = '';
     pendingStartPayload: LobbyStartPayload | null = null;
-    private inputSeq: number = 0;
+    inputSeq: number = 0;
     clientPredictor: ClientPredictor | null = null;
-    remoteInterpolators: Map<PlayerId, InterpolationBuffer> = new Map();
-    spectatingPlayerId: PlayerId | null = null;
-    hostPlayerId: PlayerId = '';
-    playerNames: Map<PlayerId, string> = new Map();
+    private physicsController = new PhysicsController();
     nameLabelManager: NameLabelManager | null = null;
     countdownActive: boolean = false;
     countdownEndTime: number = 0;
     private deathAnimations: Map<Snake, { startTime: number }> = new Map();
-    private alivePlayers: Set<PlayerId> = new Set();
 
     constructor() {
         // Detect mobile devices
@@ -251,19 +249,9 @@ export class Game {
             // Reset multiplayer state
             this.hostSimulation = null;
             this.clientPredictor = null;
-            this.remoteInterpolators.clear();
-            this.spectatingPlayerId = null;
-            this.alivePlayers.clear();
             this.nameLabelManager?.destroy();
             this.nameLabelManager = null;
-
-            // Clean up remote snake meshes
-            for (const [pid, s] of this.multiplayerSnakes) {
-                if (pid !== this.localPlayerId) {
-                    s.mesh.parent?.remove(s.mesh);
-                }
-            }
-            this.multiplayerSnakes.clear();
+            this.playerRegistry.cleanupAndClear();
 
             // Return to lobby if still connected, otherwise menu
             if (this.networkManager?.connected && this.lobbyManager) {
@@ -565,7 +553,7 @@ export class Game {
                 this.updatePhysics(dt);
             } else {
                 // Spectating: still run multiplayer physics for remote state updates
-                this.updatePhysicsSpectating(dt);
+                this.physicsController.updateSpectating(this as unknown as PhysicsHost, dt);
             }
             this.updateVisuals(dt);
 
@@ -591,203 +579,18 @@ export class Game {
 
     updatePhysics(dt: number) {
         if (this.mode === 'multiplayer') {
-            this.updatePhysicsMultiplayer(dt);
+            this.physicsController.updateMultiplayer(this as unknown as PhysicsHost, dt);
         } else {
-            this.updatePhysicsSingleplayer(dt);
+            this.physicsController.updateSingleplayer(this as unknown as PhysicsHost, dt);
         }
     }
 
-    private updatePhysicsSingleplayer(dt: number) {
-        this.dayTime += dt * 0.05;
-        this.sunLight.position.x = this.snake.position.x + 50;
-        this.sunLight.position.z = this.snake.position.z + 50;
-
-        const turn = (this.keys.right ? 1 : 0) - (this.keys.left ? 1 : 0);
-        this.snake.setTurn(turn);
-
-        // --- BOOST LOGIC (Continuous) ---
-        if (this.keys.boost && this.ep > 0) {
-            this.snake.setBoosting(true);
-            this.ep = Math.max(0, this.ep - CONFIG.EP_DRAIN_PER_SEC * dt);
-        } else {
-            this.snake.setBoosting(false);
-            if (!this.keys.boost && !this.snake.isStalled) {
-                this.ep = Math.min(this.maxEp, this.ep + dt * 2.0);
-            }
-        }
-        this.ui.updateEp(this.ep, this.maxEp);
-
-        this.world.update(this.snake.position.x, this.snake.position.z);
-
-        if (this.water) {
-            this.water.material.uniforms['sunDirection'].value.copy(this.sunLight.position).normalize();
-        }
-
-        const obstacles = this.world.getObstacles();
-        const alive = this.snake.update(dt, obstacles);
-
-        if (!alive) {
-            if (this.mode === 'singleplayer' || this.isHost) {
-                this.gameOver();
-            }
-            // Clients wait for authoritative death event from server
-        }
-
-        const eatResults = this.appleManager.update(dt);
-        for (const eat of eatResults) {
-            this.score += 10;
-            this.ui.updateScore(this.score);
-            this.ep = Math.min(this.maxEp, this.ep + CONFIG.EP_PER_APPLE);
-            this.ui.updateEp(this.ep, this.maxEp);
-
-            this.snake.growPending += CONFIG.GROWTH_PER_APPLE;
-            const newSpeed = Math.min(CONFIG.MAX_SPEED, this.snake.targetBaseSpeed + CONFIG.SPEED_INCREMENT_PER_APPLE);
-            this.snake.setBaseSpeed(newSpeed);
-        }
-
-        if (this.appleManager.activeApples.length < CONFIG.MAX_APPLES && Math.random() < CONFIG.SPAWN_CHANCE) {
-            const tree = this.world.getRandomTree();
-            if (tree) this.appleManager.spawnApple(tree);
-        }
-
-        this.burstSystem.update(dt);
-    }
-
-    private updatePhysicsMultiplayer(dt: number) {
-        this.dayTime += dt * 0.05;
-        this.sunLight.position.x = this.snake.position.x + 50;
-        this.sunLight.position.z = this.snake.position.z + 50;
-
-        this.world.update(this.snake.position.x, this.snake.position.z);
-
-        if (this.water) {
-            this.water.material.uniforms['sunDirection'].value.copy(this.sunLight.position).normalize();
-        }
-
-        // Countdown: skip input + physics until countdown ends
-        if (this.countdownActive) {
-            if (Date.now() >= this.countdownEndTime) {
-                this.countdownActive = false;
-            } else {
-                this.burstSystem.update(dt);
-                return;
-            }
-        }
-
-        // Build local input from keys
-        const turn = ((this.keys.right ? 1 : 0) - (this.keys.left ? 1 : 0)) as -1 | 0 | 1;
-        const boost = this.keys.boost;
-        const localInput: InputPayload = {
-            playerId: this.localPlayerId,
-            seq: this.inputSeq++,
-            turn,
-            boost,
-        };
-
-        // Send local input over network
-        if (this.networkManager) {
-            this.networkManager.sendInput(localInput);
-        }
-
-        // Client-side prediction: apply input locally and predict physics
-        if (!this.isHost && this.clientPredictor) {
-            this.clientPredictor.addInput(localInput);
-            this.snake.setInput(turn, boost);
-            const obstacles = this.world.getObstacles();
-            this.clientPredictor.predict(dt, obstacles);
-        }
-
-        // Tick remote interpolators for non-host clients
-        if (!this.isHost) {
-            const now = performance.now();
-            for (const [pid, interp] of this.remoteInterpolators) {
-                if (pid === this.localPlayerId) continue;
-                const snake = this.multiplayerSnakes.get(pid);
-                if (!snake || !snake.mesh.visible) continue;
-                const interpState = interp.getInterpolatedState(now);
-                if (interpState) {
-                    snake.applyNetState(interpState);
-                }
-            }
-        }
-
-        if (this.isHost && this.hostSimulation) {
-            // Host: feed local input directly into simulation
-            this.hostSimulation.receiveInput(localInput);
-
-            // Run simulation
-            const obstacles = this.world.getObstacles();
-            this.hostSimulation.simulate(dt, obstacles);
-
-            // Apple eating
-            const eatResults = this.appleManager.update(dt);
-            for (const eat of eatResults) {
-                this.hostSimulation.handleEat(eat.playerId, eat.appleId, {
-                    x: eat.position.x,
-                    y: eat.position.y,
-                    z: eat.position.z,
-                });
-            }
-
-            // Apple spawning
-            if (this.appleManager.activeApples.length < CONFIG.MAX_APPLES && Math.random() < CONFIG.SPAWN_CHANCE) {
-                const tree = this.world.getRandomTree();
-                if (tree) {
-                    const appleId = this.appleManager.spawnApple(tree);
-                    if (appleId) {
-                        const apple = this.appleManager.getAppleById(appleId);
-                        if (apple) {
-                            this.hostSimulation.pendingEvents.push({
-                                type: 'apple_spawn',
-                                appleId,
-                                x: apple.mesh.position.x,
-                                y: apple.mesh.position.y,
-                                z: apple.mesh.position.z,
-                            });
-                        }
-                    }
-                }
-            }
-
-            // Check for game end
-            const gameEndEvent = this.hostSimulation.checkGameEnd();
-            if (gameEndEvent && gameEndEvent.type === 'game_over') {
-                // Fill in player names from lobby data
-                const lobbyPlayers = this.lobbyManager?.getPlayerList() || [];
-                for (const ranking of gameEndEvent.rankings) {
-                    const player = lobbyPlayers.find(p => p.id === ranking.playerId);
-                    ranking.name = player?.name || 'UNKNOWN';
-                }
-                this.hostSimulation.pendingEvents.push(gameEndEvent);
-            }
-
-            // Broadcast state at rate-limited interval
-            const statePayload = this.hostSimulation.getStatePayload();
-            this.networkManager?.sendState(statePayload);
-
-            // Update local EP bar from host simulation
-            const localEp = this.hostSimulation.getPlayerEp(this.localPlayerId);
-            if (localEp) {
-                this.ep = localEp.ep;
-                this.maxEp = localEp.maxEp;
-            }
-            this.ui.updateEp(this.ep, this.maxEp);
-
-            // Update local score
-            this.score = this.hostSimulation.getPlayerScore(this.localPlayerId);
-            this.ui.updateScore(this.score);
-        }
-        // Client physics are applied via handleStateUpdate when 'state' events arrive
-
-        this.burstSystem.update(dt);
-    }
-
-    private handleStateUpdate(payload: StatePayload): void {
+    handleStateUpdate(payload: StatePayload): void {
         const now = performance.now();
 
         // Apply snake states
         for (const snakeState of payload.snakes) {
-            const snake = this.multiplayerSnakes.get(snakeState.playerId);
+            const snake = this.playerRegistry.getSnake(snakeState.playerId);
             if (!snake) continue;
 
             if (snakeState.playerId === this.localPlayerId) {
@@ -799,16 +602,17 @@ export class Game {
                     snake.applyNetState(snakeState);
                 }
 
-                // Re-enable snake if server says we're alive (override local prediction)
-                if (snakeState.alive && !snake.isAlive()) {
-                    snake.revive();
-                }
-
                 this.score = snakeState.score;
                 this.ui.updateScore(this.score);
+
+                // Sync EP from server (client only — host reads from HostSimulation directly)
+                if (!this.isHost) {
+                    this.ep = snakeState.ep;
+                    this.ui.updateEp(this.ep, this.maxEp);
+                }
             } else {
                 // Push to interpolation buffer for remote snakes
-                const interp = this.remoteInterpolators.get(snakeState.playerId);
+                const interp = this.playerRegistry.getInterpolator(snakeState.playerId);
                 if (interp) {
                     interp.pushState(snakeState, now);
                 } else {
@@ -818,13 +622,12 @@ export class Game {
             }
 
             if (snakeState.alive) {
-                this.alivePlayers.add(snakeState.playerId);
+                this.playerRegistry.markAlive(snakeState.playerId);
             } else {
-                this.alivePlayers.delete(snakeState.playerId);
-                snake.hide();
-                if (snakeState.playerId === this.localPlayerId) {
-                    this.audio.playCrash();
-                    this.burstSystem.emit(snake.position, 30, 0xFF4081);
+                this.playerRegistry.markDead(snakeState.playerId);
+                // Only hide if not currently playing death animation
+                if (!this.deathAnimations.has(snake)) {
+                    snake.hide();
                 }
             }
         }
@@ -833,7 +636,7 @@ export class Game {
         if (payload.paths) {
             for (const [pid, keypoints] of Object.entries(payload.paths)) {
                 if (pid === this.localPlayerId) continue;
-                const snake = this.multiplayerSnakes.get(pid);
+                const snake = this.playerRegistry.getSnake(pid);
                 if (snake) {
                     snake.applyPathKeypoints(keypoints);
                 }
@@ -866,7 +669,7 @@ export class Game {
                 break;
             }
             case 'death': {
-                const dsnake = this.multiplayerSnakes.get(event.playerId);
+                const dsnake = this.playerRegistry.getSnake(event.playerId);
                 if (dsnake) {
                     this.audio.playCrash();
                     this.burstSystem.emit(dsnake.position, 30, 0xFF4081);
@@ -874,24 +677,24 @@ export class Game {
                     this.animateSnakeDeath(dsnake);
                 }
                 // Get player name for kill feed
-                const victimName = this.playerNames.get(event.playerId) || 'UNKNOWN';
+                const victimName = this.playerRegistry.getName(event.playerId) || 'UNKNOWN';
                 if (event.reason === 'disconnect') {
                     this.ui.addKillFeedEntry(`${victimName} DISCONNECTED`, '#888888');
                 } else if (event.killerId) {
-                    const killerName = this.playerNames.get(event.killerId) || 'UNKNOWN';
+                    const killerName = this.playerRegistry.getName(event.killerId) || 'UNKNOWN';
                     this.ui.addKillFeedEntry(`${killerName} SEVERED ${victimName}`);
                 } else {
                     this.ui.addKillFeedEntry(`${victimName} SEVERED (${event.reason})`);
                 }
                 // Remove name label for dead player
                 this.nameLabelManager?.removeLabel(event.playerId);
-                this.alivePlayers.delete(event.playerId);
+                this.playerRegistry.markDead(event.playerId);
                 // Enter spectator mode if local player died in multiplayer
                 if (event.playerId === this.localPlayerId && this.mode === 'multiplayer') {
                     this.enterSpectatorMode();
                 }
                 // If spectating the player who just died, switch to next
-                if (this.state === GameState.SPECTATING && this.spectatingPlayerId === event.playerId) {
+                if (this.state === GameState.SPECTATING && this.playerRegistry.spectatingPlayerId === event.playerId) {
                     this.spectateNextPlayer();
                 }
                 break;
@@ -909,6 +712,7 @@ export class Game {
     }
 
     private animateSnakeDeath(snake: Snake): void {
+        snake.mesh.visible = true; // Re-show for death animation (may have been hidden)
         this.deathAnimations.set(snake, { startTime: Date.now() });
     }
 
@@ -917,9 +721,7 @@ export class Game {
 
         // Update body visuals for all snakes in multiplayer, or just local in singleplayer
         if (this.mode === 'multiplayer') {
-            for (const [, s] of this.multiplayerSnakes) {
-                s.updateBodyVisuals();
-            }
+            this.playerRegistry.forEach(p => p.snake.updateBodyVisuals());
         } else {
             this.snake.updateBodyVisuals();
         }
@@ -1029,7 +831,7 @@ export class Game {
 
         // Boost particles for remote snakes in multiplayer
         if (this.mode === 'multiplayer') {
-            for (const [pid, s] of this.multiplayerSnakes) {
+            for (const [pid, s] of this.playerRegistry.snakeEntries()) {
                 if (pid === this.localPlayerId) continue;
                 if (s.isBoosting) {
                     this._tempVec3.set(Math.cos(s.angle), 0, Math.sin(s.angle));
@@ -1050,7 +852,7 @@ export class Game {
                 const halfW = window.innerWidth / 2;
                 const halfH = window.innerHeight / 2;
 
-                for (const [pid, s] of this.multiplayerSnakes) {
+                for (const [pid, s] of this.playerRegistry.snakeEntries()) {
                     if (!s.mesh.visible || s.bodyMeshes.length === 0) {
                         entries.push({ playerId: pid, screenX: 0, screenY: 0, visible: false, distance: 0 });
                         continue;
@@ -1088,8 +890,8 @@ export class Game {
     updateCamera(dt: number) {
         // Determine which snake the camera should follow
         let targetSnake = this.snake;
-        if (this.state === GameState.SPECTATING && this.spectatingPlayerId) {
-            const spectated = this.multiplayerSnakes.get(this.spectatingPlayerId);
+        if (this.state === GameState.SPECTATING && this.playerRegistry.spectatingPlayerId) {
+            const spectated = this.playerRegistry.getSnake(this.playerRegistry.spectatingPlayerId);
             if (spectated && spectated.mesh.visible) {
                 targetSnake = spectated;
             }
@@ -1185,6 +987,7 @@ export class Game {
 
     gameOver() {
         if (this.state === GameState.GAME_OVER) return;
+        if (this.mode === 'multiplayer') return; // MP deaths handled via death events
         this.audio.playCrash();
         this.audio.stopMusic();
         this.audio.stopWaterSound();
@@ -1386,121 +1189,29 @@ export class Game {
     enterSpectatorMode(): void {
         this.state = GameState.SPECTATING;
         this.keys = { left: false, right: false, boost: false };
+        this.ui.hideGameOver(); // Clear any stale singleplayer game over UI
         this.spectateNextPlayer();
     }
 
     spectateNextPlayer(direction: 1 | -1 = 1): void {
         // Find alive remote snakes
-        const aliveIds: PlayerId[] = [];
-        for (const [pid, s] of this.multiplayerSnakes) {
-            if (pid === this.localPlayerId) continue;
-            if (this.alivePlayers.has(pid)) {
-                aliveIds.push(pid);
-            }
-        }
+        const aliveIds = this.playerRegistry.getAliveRemoteIds();
 
         if (aliveIds.length === 0) {
             // No one to spectate
-            this.spectatingPlayerId = null;
+            this.playerRegistry.spectatingPlayerId = null;
             this.ui.hideSpectator();
             return;
         }
 
         // Cycle to next alive player
-        const currentIdx = this.spectatingPlayerId ? aliveIds.indexOf(this.spectatingPlayerId) : -1;
+        const currentIdx = this.playerRegistry.spectatingPlayerId ? aliveIds.indexOf(this.playerRegistry.spectatingPlayerId) : -1;
         const nextIdx = (currentIdx + direction + aliveIds.length) % aliveIds.length;
-        this.spectatingPlayerId = aliveIds[nextIdx];
+        this.playerRegistry.spectatingPlayerId = aliveIds[nextIdx];
 
         // Show spectator banner with player name
-        const name = this.playerNames.get(this.spectatingPlayerId) || 'UNKNOWN';
+        const name = this.playerRegistry.getName(this.playerRegistry.spectatingPlayerId) || 'UNKNOWN';
         this.ui.showSpectator(name);
-    }
-
-    private updatePhysicsSpectating(dt: number): void {
-        // Keep simulation and visuals running after local death so multiplayer continues.
-        this.dayTime += dt * 0.05;
-
-        const spectatedSnake = this.spectatingPlayerId
-            ? this.multiplayerSnakes.get(this.spectatingPlayerId)
-            : null;
-        const focusSnake = spectatedSnake && this.spectatingPlayerId && this.alivePlayers.has(this.spectatingPlayerId)
-            ? spectatedSnake
-            : this.snake;
-
-        this.world.update(focusSnake.position.x, focusSnake.position.z);
-        this.sunLight.position.x = focusSnake.position.x + 50;
-        this.sunLight.position.z = focusSnake.position.z + 50;
-
-        if (this.water) {
-            this.water.material.uniforms['sunDirection'].value.copy(this.sunLight.position).normalize();
-        }
-
-        if (this.isHost && this.hostSimulation) {
-            // Local player is dead while spectating, but host must keep the authoritative sim running.
-            this.hostSimulation.receiveInput({
-                playerId: this.localPlayerId,
-                seq: this.inputSeq++,
-                turn: 0,
-                boost: false,
-            });
-
-            const obstacles = this.world.getObstacles();
-            this.hostSimulation.simulate(dt, obstacles);
-
-            const eatResults = this.appleManager.update(dt);
-            for (const eat of eatResults) {
-                this.hostSimulation.handleEat(eat.playerId, eat.appleId, {
-                    x: eat.position.x,
-                    y: eat.position.y,
-                    z: eat.position.z,
-                });
-            }
-
-            if (this.appleManager.activeApples.length < CONFIG.MAX_APPLES && Math.random() < CONFIG.SPAWN_CHANCE) {
-                const tree = this.world.getRandomTree();
-                if (tree) {
-                    const appleId = this.appleManager.spawnApple(tree);
-                    if (appleId) {
-                        const apple = this.appleManager.getAppleById(appleId);
-                        if (apple) {
-                            this.hostSimulation.pendingEvents.push({
-                                type: 'apple_spawn',
-                                appleId,
-                                x: apple.mesh.position.x,
-                                y: apple.mesh.position.y,
-                                z: apple.mesh.position.z,
-                            });
-                        }
-                    }
-                }
-            }
-
-            const gameEndEvent = this.hostSimulation.checkGameEnd();
-            if (gameEndEvent && gameEndEvent.type === 'game_over') {
-                const lobbyPlayers = this.lobbyManager?.getPlayerList() || [];
-                for (const ranking of gameEndEvent.rankings) {
-                    const player = lobbyPlayers.find(p => p.id === ranking.playerId);
-                    ranking.name = player?.name || 'UNKNOWN';
-                }
-                this.hostSimulation.pendingEvents.push(gameEndEvent);
-            }
-
-            const statePayload = this.hostSimulation.getStatePayload();
-            this.networkManager?.sendState(statePayload);
-        } else {
-            // Tick remote interpolators (client only)
-            const now = performance.now();
-            for (const [pid, interp] of this.remoteInterpolators) {
-                const snake = this.multiplayerSnakes.get(pid);
-                if (!snake || !snake.mesh.visible) continue;
-                const interpState = interp.getInterpolatedState(now);
-                if (interpState) {
-                    snake.applyNetState(interpState);
-                }
-            }
-        }
-
-        this.burstSystem.update(dt);
     }
 
     // --- MULTIPLAYER METHODS ---
@@ -1523,17 +1234,15 @@ export class Game {
             };
         }
 
-        this.multiplayerSnakes.set(playerId, snake);
+        // Registration into playerRegistry is done in startMultiplayerGame after names are known
         return snake;
     }
 
     removeSnake(playerId: PlayerId): void {
-        const snake = this.multiplayerSnakes.get(playerId);
+        const snake = this.playerRegistry.getSnake(playerId);
         if (!snake) return;
         snake.mesh.parent?.remove(snake.mesh);
-        this.multiplayerSnakes.delete(playerId);
-        this.remoteInterpolators.delete(playerId);
-        this.alivePlayers.delete(playerId);
+        this.playerRegistry.removePlayer(playerId);
     }
 
     async createMultiplayerRoom(name: string) {
@@ -1593,11 +1302,6 @@ export class Game {
     leaveMultiplayerRoom() {
         this.hostSimulation = null;
         this.clientPredictor = null;
-        this.remoteInterpolators.clear();
-        this.spectatingPlayerId = null;
-        this.alivePlayers.clear();
-        this.hostPlayerId = '';
-        this.playerNames.clear();
         this.nameLabelManager?.destroy();
         this.nameLabelManager = null;
         if (this.lobbyManager) {
@@ -1609,13 +1313,7 @@ export class Game {
             this.networkManager.disconnect();
             this.networkManager = null;
         }
-        // Clean up remote snakes
-        for (const [pid, s] of this.multiplayerSnakes) {
-            if (pid !== this.localPlayerId) {
-                s.mesh.parent?.remove(s.mesh);
-            }
-        }
-        this.multiplayerSnakes.clear();
+        this.playerRegistry.cleanupAndClear();
         this.isHost = false;
         this.mode = 'singleplayer';
         this.state = GameState.MENU;
@@ -1659,38 +1357,23 @@ export class Game {
         // Stop any water sounds from previous game
         this.audio.stopWaterSound();
 
-        // Clean up any existing multiplayer snakes
-        for (const [pid, s] of this.multiplayerSnakes) {
-            if (pid !== this.localPlayerId) {
-                s.mesh.parent?.remove(s.mesh);
-            }
-        }
-        this.multiplayerSnakes.clear();
+        // Clean up any existing multiplayer state
+        this.playerRegistry.cleanupAndClear();
         this.hostSimulation = null;
         this.clientPredictor = null;
-        this.remoteInterpolators.clear();
-        this.spectatingPlayerId = null;
-        this.alivePlayers.clear();
 
-        // Create snakes for all players using addSnake helper
+        // Create snakes for all players and register in PlayerRegistry
         const players = this.lobbyManager?.getPlayerList() || [];
-
-        // Populate hostPlayerId and playerNames for disconnect handling
-        const hostPlayer = players.find(p => p.isHost);
-        this.hostPlayerId = hostPlayer?.id || '';
-        this.playerNames.clear();
-        for (const p of players) {
-            this.playerNames.set(p.id, p.name);
-        }
 
         for (const pid of payload.playerOrder) {
             const spawn = payload.spawns[pid];
             const player = players.find(p => p.id === pid);
             const colorIndex = player?.colorIndex ?? 0;
-            this.addSnake(pid, spawn.x, spawn.z, spawn.angle, colorIndex);
+            const snake = this.addSnake(pid, spawn.x, spawn.z, spawn.angle, colorIndex);
+            const isLocal = pid === this.localPlayerId;
+            const isHost = player?.isHost ?? false;
+            this.playerRegistry.addPlayer(pid, player?.name || 'UNKNOWN', colorIndex, snake, isHost, isLocal);
         }
-
-        this.alivePlayers = new Set(payload.playerOrder);
 
         // Create name labels for all players
         this.nameLabelManager?.destroy();
@@ -1708,8 +1391,8 @@ export class Game {
                 this.scene,
                 () => {
                     const heads: Array<{ id: string; position: THREE.Vector3 }> = [];
-                    for (const [pid, s] of this.multiplayerSnakes) {
-                        if (s.bodyMeshes.length > 0 && this.alivePlayers.has(pid)) {
+                    for (const [pid, s] of this.playerRegistry.snakeEntries()) {
+                        if (s.bodyMeshes.length > 0 && this.playerRegistry.isAlive(pid)) {
                             heads.push({ id: pid, position: s.bodyMeshes[0].position });
                         }
                     }
@@ -1725,7 +1408,7 @@ export class Game {
             // Create HostSimulation and register all players
             this.hostSimulation = new HostSimulation();
             for (const pid of payload.playerOrder) {
-                const snake = this.multiplayerSnakes.get(pid)!;
+                const snake = this.playerRegistry.getSnake(pid)!;
                 const player = players.find(p => p.id === pid);
                 const colorIndex = player?.colorIndex ?? 0;
                 this.hostSimulation.addPlayer(pid, snake, colorIndex);
@@ -1770,7 +1453,7 @@ export class Game {
             this.networkManager?.on('presence:leave', (data: any) => {
                 if (data.presences) {
                     for (const p of data.presences) {
-                        if (p.playerId && p.playerId === this.hostPlayerId) {
+                        if (p.playerId && p.playerId === this.playerRegistry.hostPlayerId) {
                             this.handleHostDisconnected();
                         }
                     }
@@ -1791,7 +1474,7 @@ export class Game {
             // Create interpolation buffers for remote snakes
             for (const pid of payload.playerOrder) {
                 if (pid !== this.localPlayerId) {
-                    this.remoteInterpolators.set(pid, new InterpolationBuffer());
+                    this.playerRegistry.setInterpolator(pid, new InterpolationBuffer());
                 }
             }
         }

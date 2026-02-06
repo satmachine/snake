@@ -1007,6 +1007,7 @@ export class Snake {
             score: 0, // Score tracked externally
             segmentCount: this.bodyMeshes.length,
             isBoosting: this.isBoosting,
+            ep: 0, // Overwritten by HostSimulation with actual value
             lastProcessedSeq,
         };
     }

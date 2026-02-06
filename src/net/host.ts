@@ -325,6 +325,7 @@ export class HostSimulation {
             const state = record.snake.serialize(pid, record.lastAckedSeq);
             state.alive = record.alive;
             state.score = record.score;
+            state.ep = record.ep;
             snakes.push(state);
         }
 
