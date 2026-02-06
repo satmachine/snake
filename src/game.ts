@@ -26,6 +26,7 @@ import { HostSimulation } from './net/host';
 import { ClientPredictor, InterpolationBuffer } from './net/client';
 import type { PlayerId, LobbyStartPayload, InputPayload, StatePayload, GameEvent } from './net/protocol';
 import { PlayerRegistry } from './game/PlayerRegistry';
+import { PhysicsController, type PhysicsHost } from './game/PhysicsController';
 
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
@@ -140,8 +141,9 @@ export class Game {
     playerRegistry: PlayerRegistry = new PlayerRegistry();
     localPlayerId: PlayerId = '';
     pendingStartPayload: LobbyStartPayload | null = null;
-    private inputSeq: number = 0;
+    inputSeq: number = 0;
     clientPredictor: ClientPredictor | null = null;
+    private physicsController = new PhysicsController();
     nameLabelManager: NameLabelManager | null = null;
     countdownActive: boolean = false;
     countdownEndTime: number = 0;
@@ -551,7 +553,7 @@ export class Game {
                 this.updatePhysics(dt);
             } else {
                 // Spectating: still run multiplayer physics for remote state updates
-                this.updatePhysicsSpectating(dt);
+                this.physicsController.updateSpectating(this as unknown as PhysicsHost, dt);
             }
             this.updateVisuals(dt);
 
@@ -577,197 +579,13 @@ export class Game {
 
     updatePhysics(dt: number) {
         if (this.mode === 'multiplayer') {
-            this.updatePhysicsMultiplayer(dt);
+            this.physicsController.updateMultiplayer(this as unknown as PhysicsHost, dt);
         } else {
-            this.updatePhysicsSingleplayer(dt);
+            this.physicsController.updateSingleplayer(this as unknown as PhysicsHost, dt);
         }
     }
 
-    private updatePhysicsSingleplayer(dt: number) {
-        this.dayTime += dt * 0.05;
-        this.sunLight.position.x = this.snake.position.x + 50;
-        this.sunLight.position.z = this.snake.position.z + 50;
-
-        const turn = (this.keys.right ? 1 : 0) - (this.keys.left ? 1 : 0);
-        this.snake.setTurn(turn);
-
-        // --- BOOST LOGIC (Continuous) ---
-        if (this.keys.boost && this.ep > 0) {
-            this.snake.setBoosting(true);
-            this.ep = Math.max(0, this.ep - CONFIG.EP_DRAIN_PER_SEC * dt);
-        } else {
-            this.snake.setBoosting(false);
-            if (!this.keys.boost && !this.snake.isStalled) {
-                this.ep = Math.min(this.maxEp, this.ep + dt * 2.0);
-            }
-        }
-        this.ui.updateEp(this.ep, this.maxEp);
-
-        this.world.update(this.snake.position.x, this.snake.position.z);
-
-        if (this.water) {
-            this.water.material.uniforms['sunDirection'].value.copy(this.sunLight.position).normalize();
-        }
-
-        const obstacles = this.world.getObstacles();
-        const alive = this.snake.update(dt, obstacles);
-
-        if (!alive) {
-            if (this.mode === 'singleplayer' || this.isHost) {
-                this.gameOver();
-            }
-            // Clients wait for authoritative death event from server
-        }
-
-        const eatResults = this.appleManager.update(dt);
-        for (const eat of eatResults) {
-            this.score += 10;
-            this.ui.updateScore(this.score);
-            this.ep = Math.min(this.maxEp, this.ep + CONFIG.EP_PER_APPLE);
-            this.ui.updateEp(this.ep, this.maxEp);
-
-            this.snake.growPending += CONFIG.GROWTH_PER_APPLE;
-            const newSpeed = Math.min(CONFIG.MAX_SPEED, this.snake.targetBaseSpeed + CONFIG.SPEED_INCREMENT_PER_APPLE);
-            this.snake.setBaseSpeed(newSpeed);
-        }
-
-        if (this.appleManager.activeApples.length < CONFIG.MAX_APPLES && Math.random() < CONFIG.SPAWN_CHANCE) {
-            const tree = this.world.getRandomTree();
-            if (tree) this.appleManager.spawnApple(tree);
-        }
-
-        this.burstSystem.update(dt);
-    }
-
-    private updatePhysicsMultiplayer(dt: number) {
-        this.dayTime += dt * 0.05;
-        this.sunLight.position.x = this.snake.position.x + 50;
-        this.sunLight.position.z = this.snake.position.z + 50;
-
-        this.world.update(this.snake.position.x, this.snake.position.z);
-
-        if (this.water) {
-            this.water.material.uniforms['sunDirection'].value.copy(this.sunLight.position).normalize();
-        }
-
-        // Countdown: skip input + physics until countdown ends
-        if (this.countdownActive) {
-            if (Date.now() >= this.countdownEndTime) {
-                this.countdownActive = false;
-            } else {
-                this.burstSystem.update(dt);
-                return;
-            }
-        }
-
-        // Build local input from keys
-        const turn = ((this.keys.right ? 1 : 0) - (this.keys.left ? 1 : 0)) as -1 | 0 | 1;
-        const boost = this.keys.boost;
-        const localInput: InputPayload = {
-            playerId: this.localPlayerId,
-            seq: this.inputSeq++,
-            turn,
-            boost,
-        };
-
-        // Send local input over network
-        if (this.networkManager) {
-            this.networkManager.sendInput(localInput);
-        }
-
-        // Client-side prediction: apply input locally and predict physics
-        if (!this.isHost && this.clientPredictor) {
-            this.clientPredictor.addInput(localInput);
-            this.snake.setInput(turn, boost);
-            const obstacles = this.world.getObstacles();
-            this.clientPredictor.predict(dt, obstacles);
-        }
-
-        // Tick remote interpolators for non-host clients
-        if (!this.isHost) {
-            const now = performance.now();
-            this.playerRegistry.forEach((player, pid) => {
-                if (pid === this.localPlayerId || !player.interpolator) return;
-                if (!player.snake.mesh.visible) return;
-                const interpState = player.interpolator.getInterpolatedState(now);
-                if (interpState) {
-                    player.snake.applyNetState(interpState);
-                }
-            });
-        }
-
-        if (this.isHost && this.hostSimulation) {
-            // Host: feed local input directly into simulation
-            this.hostSimulation.receiveInput(localInput);
-
-            // Run simulation
-            const obstacles = this.world.getObstacles();
-            this.hostSimulation.simulate(dt, obstacles);
-
-            // Apple eating
-            const eatResults = this.appleManager.update(dt);
-            for (const eat of eatResults) {
-                this.hostSimulation.handleEat(eat.playerId, eat.appleId, {
-                    x: eat.position.x,
-                    y: eat.position.y,
-                    z: eat.position.z,
-                });
-            }
-
-            // Apple spawning
-            if (this.appleManager.activeApples.length < CONFIG.MAX_APPLES && Math.random() < CONFIG.SPAWN_CHANCE) {
-                const tree = this.world.getRandomTree();
-                if (tree) {
-                    const appleId = this.appleManager.spawnApple(tree);
-                    if (appleId) {
-                        const apple = this.appleManager.getAppleById(appleId);
-                        if (apple) {
-                            this.hostSimulation.pendingEvents.push({
-                                type: 'apple_spawn',
-                                appleId,
-                                x: apple.mesh.position.x,
-                                y: apple.mesh.position.y,
-                                z: apple.mesh.position.z,
-                            });
-                        }
-                    }
-                }
-            }
-
-            // Check for game end
-            const gameEndEvent = this.hostSimulation.checkGameEnd();
-            if (gameEndEvent && gameEndEvent.type === 'game_over') {
-                // Fill in player names from lobby data
-                const lobbyPlayers = this.lobbyManager?.getPlayerList() || [];
-                for (const ranking of gameEndEvent.rankings) {
-                    const player = lobbyPlayers.find(p => p.id === ranking.playerId);
-                    ranking.name = player?.name || 'UNKNOWN';
-                }
-                this.hostSimulation.pendingEvents.push(gameEndEvent);
-            }
-
-            // Broadcast state at rate-limited interval
-            const statePayload = this.hostSimulation.getStatePayload();
-            this.networkManager?.sendState(statePayload);
-
-            // Update local EP bar from host simulation
-            const localEp = this.hostSimulation.getPlayerEp(this.localPlayerId);
-            if (localEp) {
-                this.ep = localEp.ep;
-                this.maxEp = localEp.maxEp;
-            }
-            this.ui.updateEp(this.ep, this.maxEp);
-
-            // Update local score
-            this.score = this.hostSimulation.getPlayerScore(this.localPlayerId);
-            this.ui.updateScore(this.score);
-        }
-        // Client physics are applied via handleStateUpdate when 'state' events arrive
-
-        this.burstSystem.update(dt);
-    }
-
-    private handleStateUpdate(payload: StatePayload): void {
+    handleStateUpdate(payload: StatePayload): void {
         const now = performance.now();
 
         // Apply snake states
@@ -1391,93 +1209,6 @@ export class Game {
         // Show spectator banner with player name
         const name = this.playerRegistry.getName(this.playerRegistry.spectatingPlayerId) || 'UNKNOWN';
         this.ui.showSpectator(name);
-    }
-
-    private updatePhysicsSpectating(dt: number): void {
-        // Keep simulation and visuals running after local death so multiplayer continues.
-        this.dayTime += dt * 0.05;
-
-        const spectatedSnake = this.playerRegistry.spectatingPlayerId
-            ? this.playerRegistry.getSnake(this.playerRegistry.spectatingPlayerId)
-            : null;
-        const focusSnake = spectatedSnake && this.playerRegistry.spectatingPlayerId && this.playerRegistry.isAlive(this.playerRegistry.spectatingPlayerId)
-            ? spectatedSnake
-            : this.snake;
-
-        this.world.update(focusSnake.position.x, focusSnake.position.z);
-        this.sunLight.position.x = focusSnake.position.x + 50;
-        this.sunLight.position.z = focusSnake.position.z + 50;
-
-        if (this.water) {
-            this.water.material.uniforms['sunDirection'].value.copy(this.sunLight.position).normalize();
-        }
-
-        if (this.isHost && this.hostSimulation) {
-            // Local player is dead while spectating, but host must keep the authoritative sim running.
-            this.hostSimulation.receiveInput({
-                playerId: this.localPlayerId,
-                seq: this.inputSeq++,
-                turn: 0,
-                boost: false,
-            });
-
-            const obstacles = this.world.getObstacles();
-            this.hostSimulation.simulate(dt, obstacles);
-
-            const eatResults = this.appleManager.update(dt);
-            for (const eat of eatResults) {
-                this.hostSimulation.handleEat(eat.playerId, eat.appleId, {
-                    x: eat.position.x,
-                    y: eat.position.y,
-                    z: eat.position.z,
-                });
-            }
-
-            if (this.appleManager.activeApples.length < CONFIG.MAX_APPLES && Math.random() < CONFIG.SPAWN_CHANCE) {
-                const tree = this.world.getRandomTree();
-                if (tree) {
-                    const appleId = this.appleManager.spawnApple(tree);
-                    if (appleId) {
-                        const apple = this.appleManager.getAppleById(appleId);
-                        if (apple) {
-                            this.hostSimulation.pendingEvents.push({
-                                type: 'apple_spawn',
-                                appleId,
-                                x: apple.mesh.position.x,
-                                y: apple.mesh.position.y,
-                                z: apple.mesh.position.z,
-                            });
-                        }
-                    }
-                }
-            }
-
-            const gameEndEvent = this.hostSimulation.checkGameEnd();
-            if (gameEndEvent && gameEndEvent.type === 'game_over') {
-                const lobbyPlayers = this.lobbyManager?.getPlayerList() || [];
-                for (const ranking of gameEndEvent.rankings) {
-                    const player = lobbyPlayers.find(p => p.id === ranking.playerId);
-                    ranking.name = player?.name || 'UNKNOWN';
-                }
-                this.hostSimulation.pendingEvents.push(gameEndEvent);
-            }
-
-            const statePayload = this.hostSimulation.getStatePayload();
-            this.networkManager?.sendState(statePayload);
-        } else {
-            // Tick remote interpolators (client only)
-            const now = performance.now();
-            this.playerRegistry.forEach((player) => {
-                if (!player.interpolator) return;
-                if (!player.snake.mesh.visible) return;
-                const interpState = player.interpolator.getInterpolatedState(now);
-                if (interpState) {
-                    player.snake.applyNetState(interpState);
-                }
-            });
-        }
-
-        this.burstSystem.update(dt);
     }
 
     // --- MULTIPLAYER METHODS ---
