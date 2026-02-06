@@ -31,11 +31,12 @@ export function sphereVsSphere(a: Sphere, b: Sphere): boolean {
 
 /**
  * Tests collision between a sphere and a cylinder.
- * Y-axis check is performed first for early exit.
+ * Only checks upper Y bound to preserve uphill collision behavior.
+ * The sphere can collide from below (important for slopes).
  */
 export function sphereVsCylinder(s: Sphere, c: Cylinder): boolean {
-  // Y-axis check first (cheap early exit)
-  if (s.y < c.minY || s.y > c.maxY) return false;
+  // Only check upper bound - snake can hit from below on slopes
+  if (s.y > c.maxY) return false;
 
   const dx = s.x - c.x;
   const dz = s.z - c.z;
