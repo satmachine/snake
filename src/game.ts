@@ -986,6 +986,7 @@ export class Game {
 
     gameOver() {
         if (this.state === GameState.GAME_OVER) return;
+        if (this.mode === 'multiplayer') return; // MP deaths handled via death events
         this.audio.playCrash();
         this.audio.stopMusic();
         this.audio.stopWaterSound();
@@ -1187,6 +1188,7 @@ export class Game {
     enterSpectatorMode(): void {
         this.state = GameState.SPECTATING;
         this.keys = { left: false, right: false, boost: false };
+        this.ui.hideGameOver(); // Clear any stale singleplayer game over UI
         this.spectateNextPlayer();
     }
 
