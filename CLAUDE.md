@@ -186,36 +186,99 @@ Commit often with descriptive messages. Each logical unit of work should be its 
 
 ### Code Review with Codex
 
-All pull requests must be reviewed by Codex before merging. Follow this workflow:
+All pull requests must be reviewed by Codex before merging. Codex is an AI code reviewer that catches regressions, logic errors, and behavioral changes.
+
+#### Workflow
 
 1. **Create PR**: Push your branch and create a pull request to `main`
-2. **Wait for initial review**: Codex automatically reviews new PRs. Wait for the review to appear.
-3. **Check for reactions**: When you comment `@codex review`, Codex will react with 👀 (eyes emoji) to acknowledge it's working
-4. **Address feedback**: If Codex comments with issues:
-   - Fix the issues in new commits
-   - Push the fixes to the PR branch
-   - Comment `@codex review` to request another review
-   - Wait for Codex's 👀 reaction, then wait for the new review
-5. **Iterate until approved**: Repeat step 4 until Codex has no more feedback
-6. **Wait for approval**: Codex will react with 👍 (thumbs up) when the PR is approved
-7. **Merge**: Only merge after Codex approves with 👍
+   - Use descriptive PR title and detailed body
+   - Include testing checklist if applicable
 
-**Important:**
-- **Never skip Codex review** - even for "small" changes, Codex catches regressions
-- **Never merge without approval** - wait for the 👍 reaction
-- **Address all feedback** - don't dismiss Codex comments without fixing or discussion
-- **Be patient** - Codex may take a few minutes to respond to `@codex review` triggers
+2. **Wait for initial review**: Codex automatically reviews new PRs
+   - Usually appears within 1-2 minutes
+   - Check GitHub notifications or PR page
 
-**Example interaction:**
+3. **Read Codex feedback carefully**:
+   - Codex labels issues by priority: **P1** (critical), **P2** (important), **P3** (minor)
+   - Each comment explains the issue and why it matters
+   - Comments include code context and suggestions
+
+4. **Address feedback**:
+   - Fix each issue in a new commit (don't amend - keep history clean)
+   - Write clear commit messages explaining the fix
+   - Push fixes to the PR branch
+   - Verify build passes: `npx tsc --noEmit && npx vite build`
+
+5. **Request re-review**:
+   - Comment `@codex review` on the PR
+   - **Watch for 👀 reaction** - confirms Codex received the request
+   - Wait 1-3 minutes for Codex to complete review
+
+6. **Check re-review results**:
+   - **If new issues found**: Codex will comment on the new commits
+   - **If approved**: Codex posts "Didn't find any major issues. Breezy!" and reacts with 👍
+
+7. **Iterate until approved**: Repeat steps 4-6 until Codex approves
+
+8. **Merge**: Once Codex reacts with 👍, merge the PR
+   - Use `gh pr merge <number> --merge --delete-branch`
+   - Pull latest changes to local main
+
+#### How to Monitor Codex Response
+
+Use these commands to check status:
+
+```bash
+# Check for eyes emoji (Codex is working)
+gh api repos/OWNER/REPO/issues/comments/COMMENT_ID --jq '.reactions.eyes'
+
+# Check for new reviews
+gh api repos/OWNER/REPO/pulls/PR_NUMBER/reviews --jq 'length'
+
+# Check for thumbs up approval (on the PR itself, not comments)
+gh api repos/OWNER/REPO/issues/PR_NUMBER/reactions --jq '.[] | select(.content == "+1")'
 ```
-You: [Create PR]
-Codex: [Reviews, finds issue with collision detection]
-You: [Fix issue, commit, push]
-You: "@codex review"
-Codex: [Reacts with 👀]
-Codex: [Reviews again, approves with 👍]
-You: [Merge PR]
+
+#### Real Example from Phase 1 PR
+
+**Initial PR** - Codex found head-to-head collision regression:
 ```
+P2: "Preserve 2D head collision tolerance in PvP checks"
+Issue: Using sphereVsSphere (3D distance) broke jumping/skimming collision detection
+```
+
+**Fix & Re-review**:
+1. Fixed to use 2D distance + separate Y tolerance
+2. Commented `@codex review`
+3. Codex reacted with 👀
+4. Codex found second issue:
+```
+P2: "Treating cylinders as having a hard minY drops uphill hits"
+Issue: minY check in sphereVsCylinder breaks collisions on slopes
+```
+
+**Second Fix & Re-review**:
+1. Removed minY check, preserved uphill collision behavior
+2. Commented `@codex review`
+3. Codex reacted with 👀
+4. Codex approved: "Didn't find any major issues. Breezy!" + 👍
+5. Merged PR
+
+**Key Takeaways**:
+- Codex caught 2 critical regressions that would have broken gameplay
+- Both issues were subtle behavioral changes from refactoring
+- Iterative review process ensured all issues were resolved
+- Total review cycle: ~30 minutes for complete validation
+
+#### Important Guidelines
+
+- ✅ **Always wait for Codex review** - even for "small" changes
+- ✅ **Never merge without 👍** - Codex approval is required
+- ✅ **Address all feedback** - each comment highlights real issues
+- ✅ **Be patient** - Codex takes 1-3 minutes per review
+- ✅ **Keep checking** - monitor for 👀 and 👍 reactions
+- ❌ **Don't skip re-review** - always trigger `@codex review` after fixes
+- ❌ **Don't dismiss comments** - Codex feedback is accurate and valuable
 
 ### Build Verification
 
