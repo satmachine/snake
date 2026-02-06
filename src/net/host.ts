@@ -7,7 +7,7 @@ import {
     PVP_SKIP_SEGMENTS,
 } from '../definitions';
 import { Snake, Obstacle } from '../entities';
-import { sphereVsSegments, sphereVsSphere } from '../utils/collision';
+import { sphereVsSegments } from '../utils/collision';
 import type { PlayerId, InputPayload, SnakeNetState, StatePayload, GameEvent } from './protocol';
 
 interface PlayerRecord {
@@ -174,60 +174,63 @@ export class HostSimulation {
                 const headA = recA.snake.position;
                 const headB = recB.snake.position;
 
-                // Use sphere-vs-sphere collision utility
-                const collision = sphereVsSphere(
-                    { x: headA.x, y: headA.y, z: headA.z, radius: PVP_HEAD_HEAD_DISTANCE / 2 },
-                    { x: headB.x, y: headB.y, z: headB.z, radius: PVP_HEAD_HEAD_DISTANCE / 2 }
-                );
+                // Check 2D distance (X/Z only), then apply Y tolerance separately
+                // This preserves the original behavior where heads can be vertically
+                // separated but still collide if horizontally close
+                const dx = headA.x - headB.x;
+                const dz = headA.z - headB.z;
+                const distSq = dx * dx + dz * dz;
 
-                if (collision && Math.abs(headA.y - headB.y) < PVP_HEIGHT_TOLERANCE) {
-                    const lenA = recA.snake.bodyMeshes.length;
-                    const lenB = recB.snake.bodyMeshes.length;
+                if (distSq < PVP_HEAD_HEAD_DISTANCE * PVP_HEAD_HEAD_DISTANCE) {
+                    if (Math.abs(headA.y - headB.y) < PVP_HEIGHT_TOLERANCE) {
+                        const lenA = recA.snake.bodyMeshes.length;
+                        const lenB = recB.snake.bodyMeshes.length;
 
-                    if (lenA > lenB) {
-                        // B dies, A gets kill
-                        recB.alive = false;
-                        recA.kills++;
-                        deadThisTick.add(pidB);
-                        this.deathOrder.push(pidB);
-                        this.pendingEvents.push({
-                            type: 'death',
-                            playerId: pidB,
-                            killerId: pidA,
-                            reason: 'pvp',
-                        });
-                    } else if (lenB > lenA) {
-                        // A dies, B gets kill
-                        recA.alive = false;
-                        recB.kills++;
-                        deadThisTick.add(pidA);
-                        this.deathOrder.push(pidA);
-                        this.pendingEvents.push({
-                            type: 'death',
-                            playerId: pidA,
-                            killerId: pidB,
-                            reason: 'pvp',
-                        });
-                    } else {
-                        // Equal length: both die
-                        recA.alive = false;
-                        recB.alive = false;
-                        deadThisTick.add(pidA);
-                        deadThisTick.add(pidB);
-                        this.deathOrder.push(pidA);
-                        this.deathOrder.push(pidB);
-                        this.pendingEvents.push({
-                            type: 'death',
-                            playerId: pidA,
-                            killerId: pidB,
-                            reason: 'pvp',
-                        });
-                        this.pendingEvents.push({
-                            type: 'death',
-                            playerId: pidB,
-                            killerId: pidA,
-                            reason: 'pvp',
-                        });
+                        if (lenA > lenB) {
+                            // B dies, A gets kill
+                            recB.alive = false;
+                            recA.kills++;
+                            deadThisTick.add(pidB);
+                            this.deathOrder.push(pidB);
+                            this.pendingEvents.push({
+                                type: 'death',
+                                playerId: pidB,
+                                killerId: pidA,
+                                reason: 'pvp',
+                            });
+                        } else if (lenB > lenA) {
+                            // A dies, B gets kill
+                            recA.alive = false;
+                            recB.kills++;
+                            deadThisTick.add(pidA);
+                            this.deathOrder.push(pidA);
+                            this.pendingEvents.push({
+                                type: 'death',
+                                playerId: pidA,
+                                killerId: pidB,
+                                reason: 'pvp',
+                            });
+                        } else {
+                            // Equal length: both die
+                            recA.alive = false;
+                            recB.alive = false;
+                            deadThisTick.add(pidA);
+                            deadThisTick.add(pidB);
+                            this.deathOrder.push(pidA);
+                            this.deathOrder.push(pidB);
+                            this.pendingEvents.push({
+                                type: 'death',
+                                playerId: pidA,
+                                killerId: pidB,
+                                reason: 'pvp',
+                            });
+                            this.pendingEvents.push({
+                                type: 'death',
+                                playerId: pidB,
+                                killerId: pidA,
+                                reason: 'pvp',
+                            });
+                        }
                     }
                 }
             }
