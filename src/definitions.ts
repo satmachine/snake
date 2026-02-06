@@ -266,4 +266,21 @@ export const MULTIPLAYER_COLORS = [
   { head: 0xFFD740, body: 0xFFECB3, emissive: 0xFFD740, name: 'Gold' },    // Player 4 - Gold
 ];
 
+// Collision constants (used in entities.ts, host.ts)
+export const ROCK_COLLISION_RADIUS = 1.0;
+export const ROCK_COLLISION_HEIGHT_TOLERANCE = 3.0;
+export const PVP_HEAD_BODY_RADIUS = 0.75;
+export const PVP_BODY_SEGMENT_RADIUS = 0.5;
+export const PVP_HEIGHT_TOLERANCE = 3.0;
+export const PVP_HEAD_HEAD_DISTANCE = 1.5;
+export const PVP_SKIP_SEGMENTS = 3;
+
+// Gameplay constants (from game.ts)
+export const APPLE_EAT_DISTANCE = 2.5;
+export const SELF_COLLISION_GRACE_SEGMENTS = 25;
+
+// UI constants (from game.ts)
+export const NAME_LABEL_FADE_START = 100.0;
+export const NAME_LABEL_FADE_END = 150.0;
+
 export type Vector2 = { x: number; y: number };

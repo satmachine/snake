@@ -1,5 +1,6 @@
 import { Snake, Obstacle } from '../entities';
 import type { InputPayload, SnakeNetState } from './protocol';
+import { wrapAngle } from '../utils/math';
 
 // --- Client-Side Prediction ---
 
@@ -52,9 +53,7 @@ export class ClientPredictor {
             this.snake.position.z += (serverState.z - this.snake.position.z) * t;
 
             // Lerp angle
-            let angleDiff = serverState.angle - this.snake.angle;
-            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            const angleDiff = wrapAngle(serverState.angle - this.snake.angle);
             this.snake.angle += angleDiff * t;
 
             this.snake.actualSpeed += (serverState.speed - this.snake.actualSpeed) * t;
@@ -153,9 +152,7 @@ export class InterpolationBuffer {
 
     private lerpState(a: SnakeNetState, b: SnakeNetState, t: number): SnakeNetState {
         // Lerp angle properly
-        let angleDiff = b.angle - a.angle;
-        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        const angleDiff = wrapAngle(b.angle - a.angle);
 
         return {
             ...b,

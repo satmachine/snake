@@ -1,8 +1,9 @@
 
 import * as THREE from 'three';
-import { CONFIG, MULTIPLAYER_COLORS } from './definitions';
+import { CONFIG, MULTIPLAYER_COLORS, NAME_LABEL_FADE_START, NAME_LABEL_FADE_END } from './definitions';
 import { LeaderboardEntry } from './supabase';
 import type { PlayerInfo, RankingEntry } from './net/protocol';
+import { TYPOGRAPHY } from './ui/tokens';
 
 export class UI {
     score: number = 0;
@@ -1192,8 +1193,8 @@ export class NameLabelManager {
         const el = document.createElement('div');
         el.textContent = name;
         el.style.position = 'absolute';
-        el.style.fontSize = '14px';
-        el.style.fontFamily = '"Courier New", Courier, monospace';
+        el.style.fontSize = TYPOGRAPHY.sizeMd;
+        el.style.fontFamily = TYPOGRAPHY.fontFamily;
         el.style.textTransform = 'uppercase';
         el.style.letterSpacing = '2px';
         el.style.color = colorHex;
@@ -1225,8 +1226,11 @@ export class NameLabelManager {
 
             if (!entry.visible) continue;
 
-            // Fade at distance > 100 units
-            const opacity = entry.distance > 100 ? Math.max(0, 1 - (entry.distance - 100) / 50) : 1;
+            // Fade at distance > NAME_LABEL_FADE_START units
+            const fadeRange = NAME_LABEL_FADE_END - NAME_LABEL_FADE_START;
+            const opacity = entry.distance > NAME_LABEL_FADE_START
+                ? Math.max(0, 1 - (entry.distance - NAME_LABEL_FADE_START) / fadeRange)
+                : 1;
             if (opacity <= 0) continue;
 
             el.style.display = 'block';
