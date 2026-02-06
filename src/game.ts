@@ -602,13 +602,14 @@ export class Game {
                     snake.applyNetState(snakeState);
                 }
 
-                // Re-enable snake if server says we're alive (override local prediction)
-                if (snakeState.alive && !snake.isAlive()) {
-                    snake.revive();
-                }
-
                 this.score = snakeState.score;
                 this.ui.updateScore(this.score);
+
+                // Sync EP from server (client only — host reads from HostSimulation directly)
+                if (!this.isHost) {
+                    this.ep = snakeState.ep;
+                    this.ui.updateEp(this.ep, this.maxEp);
+                }
             } else {
                 // Push to interpolation buffer for remote snakes
                 const interp = this.playerRegistry.getInterpolator(snakeState.playerId);

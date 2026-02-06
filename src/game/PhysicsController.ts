@@ -214,7 +214,7 @@ export class PhysicsController {
 
         // Build local input from keys
         const turn = ((host.keys.right ? 1 : 0) - (host.keys.left ? 1 : 0)) as -1 | 0 | 1;
-        const boost = host.keys.boost;
+        const boost = host.keys.boost && host.ep > 0;
         const localInput: InputPayload = {
             playerId: host.localPlayerId,
             seq: host.inputSeq++,
@@ -231,6 +231,17 @@ export class PhysicsController {
             host.snake.setInput(turn, boost);
             const obstacles = host.world.getObstacles();
             host.clientPredictor.predict(dt, obstacles);
+
+            // Client EP management (server EP overrides periodically via handleStateUpdate)
+            if (boost) {
+                host.ep = Math.max(0, host.ep - CONFIG.EP_DRAIN_PER_SEC * dt);
+                if (host.ep <= 0) {
+                    host.snake.setBoosting(false);
+                }
+            } else if (!host.snake.isStalled) {
+                host.ep = Math.min(host.maxEp, host.ep + dt * 2.0);
+            }
+            host.ui.updateEp(host.ep, host.maxEp);
         }
 
         // Tick remote interpolators (client only)

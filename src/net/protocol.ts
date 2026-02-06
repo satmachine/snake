@@ -51,6 +51,7 @@ export interface SnakeNetState {
     score: number;
     segmentCount: number;
     isBoosting: boolean;
+    ep: number;
     lastProcessedSeq: number; // for client reconciliation
 }
 
