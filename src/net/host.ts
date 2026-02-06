@@ -1,5 +1,13 @@
-import { CONFIG } from '../definitions';
+import {
+    CONFIG,
+    PVP_HEAD_BODY_RADIUS,
+    PVP_BODY_SEGMENT_RADIUS,
+    PVP_HEIGHT_TOLERANCE,
+    PVP_HEAD_HEAD_DISTANCE,
+    PVP_SKIP_SEGMENTS,
+} from '../definitions';
 import { Snake, Obstacle } from '../entities';
+import { sphereVsSegments, sphereVsSphere } from '../utils/collision';
 import type { PlayerId, InputPayload, SnakeNetState, StatePayload, GameEvent } from './protocol';
 
 interface PlayerRecord {
@@ -110,12 +118,6 @@ export class HostSimulation {
     }
 
     private checkPvPCollisions(): void {
-        const SKIP_SEGMENTS = 3;
-        const HEAD_RADIUS = CONFIG.SEGMENT_RADIUS * 1.5;
-        const SEG_RADIUS = CONFIG.SEGMENT_RADIUS;
-        const HEIGHT_TOLERANCE = 3.0;
-        const HEAD_HEAD_DIST = 1.5;
-
         const aliveEntries: [PlayerId, PlayerRecord][] = [];
         for (const [pid, record] of this.players) {
             if (record.alive) aliveEntries.push([pid, record]);
@@ -133,32 +135,30 @@ export class HostSimulation {
                 if (deadThisTick.has(pidB)) continue;
 
                 const bodyMeshes = recB.snake.bodyMeshes;
-                for (let i = SKIP_SEGMENTS; i < bodyMeshes.length; i++) {
-                    const seg = bodyMeshes[i].position;
-                    const dx = headA.x - seg.x;
-                    const dz = headA.z - seg.z;
-                    const distSq = dx * dx + dz * dz;
-                    const minDist = HEAD_RADIUS + SEG_RADIUS;
+                const segments = bodyMeshes.map((m) => m.position);
 
-                    if (distSq < minDist * minDist) {
-                        // Height check: allow jumping over
-                        if (Math.abs(headA.y - seg.y) < HEIGHT_TOLERANCE) {
-                            // A dies, B gets kill credit
-                            recA.alive = false;
-                            recB.kills++;
-                            deadThisTick.add(pidA);
-                            this.deathOrder.push(pidA);
-                            this.pendingEvents.push({
-                                type: 'death',
-                                playerId: pidA,
-                                killerId: pidB,
-                                reason: 'pvp',
-                            });
-                            break;
-                        }
-                    }
+                const hitIndex = sphereVsSegments(
+                    { x: headA.x, y: headA.y, z: headA.z, radius: PVP_HEAD_BODY_RADIUS },
+                    segments,
+                    PVP_BODY_SEGMENT_RADIUS,
+                    PVP_SKIP_SEGMENTS,
+                    PVP_HEIGHT_TOLERANCE
+                );
+
+                if (hitIndex >= 0) {
+                    // A dies, B gets kill credit
+                    recA.alive = false;
+                    recB.kills++;
+                    deadThisTick.add(pidA);
+                    this.deathOrder.push(pidA);
+                    this.pendingEvents.push({
+                        type: 'death',
+                        playerId: pidA,
+                        killerId: pidB,
+                        reason: 'pvp',
+                    });
+                    break;
                 }
-                if (deadThisTick.has(pidA)) break;
             }
         }
 
@@ -173,60 +173,61 @@ export class HostSimulation {
 
                 const headA = recA.snake.position;
                 const headB = recB.snake.position;
-                const dx = headA.x - headB.x;
-                const dz = headA.z - headB.z;
-                const distSq = dx * dx + dz * dz;
 
-                if (distSq < HEAD_HEAD_DIST * HEAD_HEAD_DIST) {
-                    if (Math.abs(headA.y - headB.y) < HEIGHT_TOLERANCE) {
-                        const lenA = recA.snake.bodyMeshes.length;
-                        const lenB = recB.snake.bodyMeshes.length;
+                // Use sphere-vs-sphere collision utility
+                const collision = sphereVsSphere(
+                    { x: headA.x, y: headA.y, z: headA.z, radius: PVP_HEAD_HEAD_DISTANCE / 2 },
+                    { x: headB.x, y: headB.y, z: headB.z, radius: PVP_HEAD_HEAD_DISTANCE / 2 }
+                );
 
-                        if (lenA > lenB) {
-                            // B dies, A gets kill
-                            recB.alive = false;
-                            recA.kills++;
-                            deadThisTick.add(pidB);
-                            this.deathOrder.push(pidB);
-                            this.pendingEvents.push({
-                                type: 'death',
-                                playerId: pidB,
-                                killerId: pidA,
-                                reason: 'pvp',
-                            });
-                        } else if (lenB > lenA) {
-                            // A dies, B gets kill
-                            recA.alive = false;
-                            recB.kills++;
-                            deadThisTick.add(pidA);
-                            this.deathOrder.push(pidA);
-                            this.pendingEvents.push({
-                                type: 'death',
-                                playerId: pidA,
-                                killerId: pidB,
-                                reason: 'pvp',
-                            });
-                        } else {
-                            // Equal length: both die
-                            recA.alive = false;
-                            recB.alive = false;
-                            deadThisTick.add(pidA);
-                            deadThisTick.add(pidB);
-                            this.deathOrder.push(pidA);
-                            this.deathOrder.push(pidB);
-                            this.pendingEvents.push({
-                                type: 'death',
-                                playerId: pidA,
-                                killerId: pidB,
-                                reason: 'pvp',
-                            });
-                            this.pendingEvents.push({
-                                type: 'death',
-                                playerId: pidB,
-                                killerId: pidA,
-                                reason: 'pvp',
-                            });
-                        }
+                if (collision && Math.abs(headA.y - headB.y) < PVP_HEIGHT_TOLERANCE) {
+                    const lenA = recA.snake.bodyMeshes.length;
+                    const lenB = recB.snake.bodyMeshes.length;
+
+                    if (lenA > lenB) {
+                        // B dies, A gets kill
+                        recB.alive = false;
+                        recA.kills++;
+                        deadThisTick.add(pidB);
+                        this.deathOrder.push(pidB);
+                        this.pendingEvents.push({
+                            type: 'death',
+                            playerId: pidB,
+                            killerId: pidA,
+                            reason: 'pvp',
+                        });
+                    } else if (lenB > lenA) {
+                        // A dies, B gets kill
+                        recA.alive = false;
+                        recB.kills++;
+                        deadThisTick.add(pidA);
+                        this.deathOrder.push(pidA);
+                        this.pendingEvents.push({
+                            type: 'death',
+                            playerId: pidA,
+                            killerId: pidB,
+                            reason: 'pvp',
+                        });
+                    } else {
+                        // Equal length: both die
+                        recA.alive = false;
+                        recB.alive = false;
+                        deadThisTick.add(pidA);
+                        deadThisTick.add(pidB);
+                        this.deathOrder.push(pidA);
+                        this.deathOrder.push(pidB);
+                        this.pendingEvents.push({
+                            type: 'death',
+                            playerId: pidA,
+                            killerId: pidB,
+                            reason: 'pvp',
+                        });
+                        this.pendingEvents.push({
+                            type: 'death',
+                            playerId: pidB,
+                            killerId: pidA,
+                            reason: 'pvp',
+                        });
                     }
                 }
             }

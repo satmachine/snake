@@ -1,11 +1,23 @@
 
 import * as THREE from 'three';
-import { CONFIG, GameState, PALETTE_SPRING, PALETTE_SUMMER, PALETTE_AUTUMN, PALETTE_WINTER, Palette, MULTIPLAYER_COLORS } from './definitions';
+import {
+    CONFIG,
+    GameState,
+    PALETTE_SPRING,
+    PALETTE_SUMMER,
+    PALETTE_AUTUMN,
+    PALETTE_WINTER,
+    Palette,
+    MULTIPLAYER_COLORS,
+    NAME_LABEL_FADE_START,
+    NAME_LABEL_FADE_END,
+} from './definitions';
 import { Snake, AppleManager, updateAssetMaterials } from './entities';
 import { World } from './world';
 import { UI, NameLabelManager } from './ui';
 import { AudioManager } from './audio';
 import { getTerrainHeight, clearTerrainCache, seedTerrain } from './utils';
+import { wrapAngle } from './utils/math';
 import { BurstSystem } from './particles';
 import { fetchLeaderboard, submitScore } from './supabase';
 import { NetworkManager } from './net/network';
@@ -1089,12 +1101,10 @@ export class Game {
         const headPos = head.position;
         const snakeAngle = targetSnake.angle;
 
-        let diff = snakeAngle - this.cameraAngle;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        while (diff > Math.PI) diff -= Math.PI * 2;
+        const diff = wrapAngle(snakeAngle - this.cameraAngle);
 
-        if (isNaN(diff)) diff = 0;
-        this.cameraAngle += diff * (1.2 * dt);
+        if (isNaN(diff)) this.cameraAngle = snakeAngle;
+        else this.cameraAngle += diff * (1.2 * dt);
         if (isNaN(this.cameraAngle)) this.cameraAngle = 0;
 
         // Dynamic camera distance based on speed vs base speed

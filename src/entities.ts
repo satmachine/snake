@@ -2,8 +2,17 @@
 
 
 import * as THREE from 'three';
-import { CONFIG, Vector2, PALETTE_SPRING, Palette, MULTIPLAYER_COLORS } from './definitions';
+import {
+    CONFIG,
+    Vector2,
+    PALETTE_SPRING,
+    Palette,
+    MULTIPLAYER_COLORS,
+    ROCK_COLLISION_RADIUS,
+    ROCK_COLLISION_HEIGHT_TOLERANCE,
+} from './definitions';
 import { randomInt, randomFloat, randomNormal, getTerrainHeight } from './utils';
+import { sphereVsCylinder } from './utils/collision';
 import type { SnakeNetState, PathKeypoint } from './net/protocol';
 
 // --- TEXTURE HELPERS ---
@@ -729,10 +738,24 @@ export class Snake {
                 const dz = nextZ - obs.position.z;
                 if (Math.abs(dx) > 10 || Math.abs(dz) > 10) continue;
 
-                // Check 2D distance first
-                const distSq = dx * dx + dz * dz;
-                const minDist = headRadius + obs.radius;
-                if (distSq < minDist * minDist) {
+                // Check height - allow jumping over obstacles if snake is high enough
+                // Use radius to estimate obstacle height (trees have larger radius)
+                const obstacleHeight = obs.radius > 3 ? obs.radius * 2 : obs.radius; // Trees have larger radius
+                const clearance = obs.radius > 3 ? 8.0 : 2.0; // More clearance for larger obstacles (trees)
+
+                // Use collision utility for sphere vs cylinder test
+                const collision = sphereVsCylinder(
+                    { x: nextX, y: this.position.y, z: nextZ, radius: headRadius },
+                    {
+                        x: obs.position.x,
+                        z: obs.position.z,
+                        minY: obs.position.y,
+                        maxY: obs.position.y + obstacleHeight + clearance,
+                        radius: obs.radius,
+                    }
+                );
+
+                if (collision) {
                     // --- ENHANCED: BREAKABLE ROCKS ---
                     if (this.isBoosting && obs.type === 'rock' && !obs.isBroken) {
                         obs.break?.();
@@ -742,15 +765,9 @@ export class Snake {
 
                     if (obs.isBroken) continue;
 
-                    // Check height - allow jumping over obstacles if snake is high enough
-                    // Use radius to estimate obstacle height (trees have larger radius)
-                    const obstacleHeight = obs.radius > 3 ? obs.radius * 2 : obs.radius; // Trees have larger radius
-                    const clearance = obs.radius > 3 ? 8.0 : 2.0; // More clearance for larger obstacles (trees)
-                    if (this.position.y < obs.position.y + obstacleHeight + clearance) {
-                        this.isDead = true;
-                        if (this.onCrash) this.onCrash();
-                        return false;
-                    }
+                    this.isDead = true;
+                    if (this.onCrash) this.onCrash();
+                    return false;
                 }
             }
         }
